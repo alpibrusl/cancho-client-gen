@@ -5,6 +5,7 @@ on:
 
 env:
   CANCHO_REV: 93e49cd
+  WEB_REV: e4dccd7
 
 jobs:
   build-and-test:
@@ -27,10 +28,10 @@ jobs:
       - name: Build clientgen
         run: |
           export CANCHO=$GITHUB_WORKSPACE/cancho/target/release/cancho
-          $CANCHO check cancho-client-gen/src/clientgen.cho --std --backend cranelift
+          $CANCHO check cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho --std --backend cranelift
           $CANCHO fmt --check cancho-client-gen/src/
-          $CANCHO build --std --backend cranelift cancho-client-gen/src/clientgen.cho -o cancho-client-gen/build/clientgen
-      - name: The reader over the byte-verified document
+          $CANCHO build --std --backend cranelift cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho -o cancho-client-gen/build/clientgen
+      - name: The reader and the model, over the byte-verified document
         run: python3 tests/e2e.py
         working-directory: cancho-client-gen
         env:
@@ -38,7 +39,56 @@ jobs:
           BIN: ${{ github.workspace }}/cancho-client-gen/build/clientgen
       - name: The authority report
         run: |
-          $CANCHO authority cancho-client-gen/src/clientgen.cho --std > docs/authority.json
+          $CANCHO authority cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho --std > docs/authority.json
           git diff --exit-code -- docs/authority.json
         env:
           CANCHO: ${{ github.workspace }}/cancho/target/release/cancho
+
+  # The gate (#6): the committed client is what the pinned document says,
+  # and it agrees with the running service -- server and client cannot
+  # disagree silently.
+  the-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: cancho-client-gen
+      - uses: actions/checkout@v4
+        with:
+          repository: alpibrusl/cancho
+          ref: ${{ env.CANCHO_REV }}
+          path: cancho
+      - uses: actions/checkout@v4
+        with:
+          repository: alpibrusl/cancho-web
+          ref: ${{ env.WEB_REV }}
+          path: cancho-web
+      - uses: actions/checkout@v4
+        with:
+          repository: alpibrusl/cancho-schema
+          ref: 59a70285ff23af63a226bc56ff978feccb4cf8ca
+          path: cancho-schema
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+      - name: Build the pinned compiler
+        run: cargo build --release -p cancho
+        working-directory: cancho
+      - name: Build clientgen
+        run: |
+          export CANCHO=$GITHUB_WORKSPACE/cancho/target/release/cancho
+          $CANCHO build --std --backend cranelift cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho -o cancho-client-gen/build/clientgen
+      - name: The committed client matches the pinned document
+        run: scripts/check-client.sh
+        working-directory: cancho-client-gen
+        env:
+          CANCHO: ${{ github.workspace }}/cancho/target/release/cancho
+          BIN: ${{ github.workspace }}/cancho-client-gen/build/clientgen
+      - name: The committed client against the running users service
+        run: node tests/client_e2e.mjs
+        working-directory: cancho-client-gen
+        env:
+          CANCHO: ${{ github.workspace }}/cancho/target/release/cancho
+          WEB_DIR: ${{ github.workspace }}/cancho-web
+          CANCHO_DIR: ${{ github.workspace }}/cancho
+          SCHEMA_DIR: ${{ github.workspace }}/cancho-schema

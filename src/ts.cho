@@ -494,9 +494,11 @@ fn path_expression[&h](heap: &!h Heap, out: buffer.Buffer, path: buffer.Buffer) 
 // interface because the document says the response is that schema.
 fn runtime[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var line = out;
-    line = buffer.append(heap, line, "const base = \"\";\n\n");
+    line = buffer.append(heap, line, "// Where the API lives; a client points this at the server before its first call.\n");
+    line = buffer.append(heap, line, "let base = \"\";\n");
+    line = buffer.append(heap, line, "export function setBase(b: string): void { base = b; }\n\n");
     line = buffer.append(heap, line, "async function request<T>(method: string, path: string, query: Record<string, unknown> | undefined, body: unknown): Promise<T> {\n");
-    line = buffer.append(heap, line, "  const url = new URL(base + path, globalThis.location.href);\n");
+    line = buffer.append(heap, line, "  const url = new URL(base + path);\n");
     line = buffer.append(heap, line, "  if (query) for (const [k, v] of Object.entries(query)) if (v !== undefined) url.searchParams.set(k, String(v));\n");
     line = buffer.append(heap, line, "  const res = await fetch(url, { method, headers: body === undefined ? undefined : { \"Content-Type\": \"application/json\" }, body: body === undefined ? undefined : JSON.stringify(body) });\n");
     line = buffer.append(heap, line, "  const type = res.headers.get(\"Content-Type\") ?? \"\";\n");

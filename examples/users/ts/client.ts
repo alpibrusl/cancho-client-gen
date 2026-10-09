@@ -60,10 +60,12 @@ export async function deleteUser(id: number): Promise<void> {
   return request("delete", `/users/${id}`, undefined, undefined);
 }
 
-const base = "";
+// Where the API lives; a client points this at the server before its first call.
+let base = "";
+export function setBase(b: string): void { base = b; }
 
 async function request<T>(method: string, path: string, query: Record<string, unknown> | undefined, body: unknown): Promise<T> {
-  const url = new URL(base + path, globalThis.location.href);
+  const url = new URL(base + path);
   if (query) for (const [k, v] of Object.entries(query)) if (v !== undefined) url.searchParams.set(k, String(v));
   const res = await fetch(url, { method, headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   const type = res.headers.get("Content-Type") ?? "";

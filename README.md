@@ -22,7 +22,7 @@ client is written from the document by this tool, and neither side hand-writes t
 
 ## Status
 
-**Slices 1 and 2 built: the reader and the model.** [`src/clientgen.cho`](src/clientgen.cho) reads the document
+**Slices 1 to 4 built: the reader, the model, the TypeScript target, the gate.** [`src/clientgen.cho`](src/clientgen.cho) reads the document
 with `std.json`'s tape -- no copy, no foreign code -- and refuses what is not an OpenAPI 3.1 document (nine
 shape refusals, nothing written for an invalid one, pgen's discipline). [`src/model.cho`](src/model.cho)
 models what it reads, in the enum-and-struct discipline of [cancho-web#27](https://github.com/alpibrusl/cancho-web/issues/27):
@@ -38,9 +38,17 @@ post /users -> createUser (0 parameters, body NewUser, 5 responses: 201=User 400
 component NewUser: object
 ```
 
-The byte-verified `examples/users/openapi.json` reads as `ok 5 operations, 4 components`. The work is sequenced
-in [the epic (#2)](https://github.com/alpibrusl/cancho-client-gen/issues/2); the writers (#5, #7, #8), the
-committed-output half of the gate (#6) and the cancho client (#9) are not started. Sequenced after
+The byte-verified `examples/users/openapi.json` reads as `ok 5 operations, 4 components`. The TypeScript target
+([#5](https://github.com/alpibrusl/cancho-client-gen/issues/5)) is built:
+[`examples/users/ts/client.ts`](examples/users/ts/client.ts) is generated from that document -- an interface per
+component, a typed function per operation (`getUser(id: number): Promise<User>`), `problem+json` as
+`ProblemError` -- and compiles under `tsc --strict`. The gate ([#6](https://github.com/alpibrusl/cancho-client-gen/issues/6))
+is built: [`scripts/check-client.sh`](scripts/check-client.sh) regenerates the client from the document and diffs
+(`git diff --exit-code` -- a contract change without a regenerated client is a red build, not an integration
+break), and [`tests/client_e2e.mjs`](tests/client_e2e.mjs) runs the committed client against the running
+cancho-web users service -- one happy path and one `problem+json` refusal, typed both ways. The work is sequenced
+in [the epic (#2)](https://github.com/alpibrusl/cancho-client-gen/issues/2); the Go and Python targets (#7, #8)
+and the cancho client (#9) are not started. Sequenced after
 [cancho-web#16](https://github.com/alpibrusl/cancho-web/issues/16): components used below the schema root must
 be written as `$ref`, not inline -- named shapes mean a class per component instead of an anonymous one, and
 a client generator is the consumer that wants them.
@@ -48,8 +56,8 @@ a client generator is the consumer that wants them.
 ## What you get
 
 * **The contract as a file, on both sides.** The server pins its document byte for byte; the client is
-  regenerated from the same file, and CI regenerates and diffs, so a change to the API is a change to a
-  generated client that review sees.
+  regenerated from the same file, and the gate (`scripts/check-client.sh`) regenerates and diffs in CI, so a
+  change to the API is a red build without a regenerated client, never an integration break.
 * **Strict types, no coercion.** A response body that breaks the schema is refused, not coerced; every error
   the document declares as `problem+json` (RFC 9457) is a typed error the client can switch on.
 * **A class per component.** A named shape in the document (`User`, `Page`, `Problem`) is a named class in the
@@ -71,35 +79,60 @@ a client generator is the consumer that wants them.
 
 ## Quick start
 
-The reader and the model are built; the writers are slices 4–6 ([#5](https://github.com/alpibrusl/cancho-client-gen/issues/5),
-[#7](https://github.com/alpibrusl/cancho-client-gen/issues/7), [#8](https://github.com/alpibrusl/cancho-client-gen/issues/8)).
-What runs today is the gate's first half -- the answer to "is this the document a client can come from" --
-and the model, printed:
+The reader, the model, the TypeScript target and the gate are built; the Go and Python targets are
+[#7](https://github.com/alpibrusl/cancho-client-gen/issues/7) and
+[#8](https://github.com/alpibrusl/cancho-client-gen/issues/8). What runs today:
 
 ```
 scripts/build.sh build/clientgen
 build/clientgen examples/users/openapi.json --check
 ok 5 operations, 4 components
-build/clientgen examples/users/openapi.json --model
-get /users -> listUsers (2 parameters, body none, 2 responses: 200=Page 422=Problem )
-...
+build/clientgen examples/users/openapi.json --typescript -o examples/users/ts/client.ts
 ```
 
-The planned shape, once the TypeScript target lands (the gate's committed-output half is
-[issue #6](https://github.com/alpibrusl/cancho-client-gen/issues/6)):
+The generated client ([`examples/users/ts/client.ts`](examples/users/ts/client.ts), committed):
+
+```typescript
+export async function getUser(id: number): Promise<User> {
+  return request("get", `/users/${id}`, undefined, undefined);
+}
+export async function listUsers(options?: { limit?: number, offset?: number }): Promise<Page> {
+  return request("get", `/users`, options, undefined);
+}
+```
+
+The gate ([#6](https://github.com/alpibrusl/cancho-client-gen/issues/6)):
 
 ```
-clientgen examples/users/openapi.json --typescript -o clients/ts
-git diff --exit-code clients/ts
+scripts/check-client.sh     # regenerate from the document, git diff --exit-code
+node tests/client_e2e.mjs   # the committed client, against the running users service
 ```
+
+The second command builds the users service with cancho-web's own `scripts/build.sh` (its pinned compiler and
+locked packages), starts it, and calls through the compiled client:
+
+```
+ok  createUser returns a typed User (id: number)
+ok  listUsers returns a typed Page
+ok  a refused body throws ProblemError
+ok  every error at once (2 for this body)
+ok  each error carries pointer/code/detail
+```
+
+Server and client cannot disagree silently: the document pins the server (cancho-web's e2e holds what it serves
+byte for byte), the same document pins the client (the gate), and the live check holds them to each other.
 
 ## Repository layout
 
 ```
-src/clientgen.cho         the reader and the tool: `std.json`'s tape, the shape checks; --check, --model
+src/clientgen.cho         the reader and the tool: `std.json`'s tape, the shape checks; --check, --model, --typescript
 src/model.cho             the model: Method, Where, Schema (with $ref resolved to a name), Operation, ...; res all the way down
+src/ts.cho                the TypeScript writer: an interface per component, a function per operation, ProblemError
 examples/users/openapi.json  cancho-web's byte-verified document, the first test input
-tests/e2e.py              the end-to-end tests: the document read and modelled, every refusal exercised
+examples/users/ts/client.ts  the generated client, committed; the gate holds it against the document
+tests/e2e.py              the end-to-end tests: the document read and modelled, every refusal, tsc --strict
+tests/client_e2e.mjs      the committed client against the running users service (happy path, problem+json)
+scripts/check-client.sh   the gate: regenerate, git diff --exit-code
 scripts/build.sh          build against the pinned compiler
 docs/authority.json       what the tool can touch, as last approved; CI fails when it changes
 docs/index.html           the project page
