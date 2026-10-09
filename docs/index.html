@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cancho-client-gen: the contract, both ways</title>
+<meta name="description" content="cancho-client-gen consumes the byte-verified OpenAPI 3.1 document that cancho-web generates and writes strictly typed client libraries, in the pgen tradition. Built in cancho, whose compiler states what the program may touch. Design.">
+<meta property="og:title" content="cancho-client-gen: the contract, both ways">
+<meta property="og:description" content="The byte-verified OpenAPI 3.1 document in, strictly typed clients out. Strict types, no coercion, a class per component, no foreign call. Design.">
+<meta name="color-scheme" content="light dark">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<link rel="canonical" href="https://alpibrusl.github.io/cancho-client-gen/">
+<meta property="og:site_name" content="cancho-client-gen">
+<meta property="og:locale" content="en">
+<meta name="twitter:title" content="cancho-client-gen: the contract, both ways">
+<meta name="twitter:description" content="The byte-verified OpenAPI 3.1 document in, strictly typed clients out. Strict types, no coercion, a class per component, no foreign call. Design.">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#265e8d">
+<meta name="keywords" content="cancho, cancho-client-gen, OpenAPI 3.1, typed client generation, strict types, problem+json, RFC 9457, JSON Schema, systems language, capability effects">
+<meta name="author" content="alpibrusl">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://alpibrusl.github.io/cancho-client-gen/#site","url":"https://alpibrusl.github.io/cancho-client-gen/","name":"cancho-client-gen","description":"cancho-client-gen consumes the byte-verified OpenAPI 3.1 document that cancho-web generates and writes strictly typed client libraries, in the pgen tradition. Design.","inLanguage":"en"},{"@type":"SoftwareSourceCode","@id":"https://alpibrusl.github.io/cancho-client-gen/#code","name":"cancho-client-gen","description":"cancho-client-gen consumes the byte-verified OpenAPI 3.1 document that cancho-web generates and writes strictly typed client libraries, in the pgen tradition. Design.","codeRepository":"https://github.com/alpibrusl/cancho-client-gen","programmingLanguage":"cancho","license":"https://spdx.org/licenses/EUPL-1.2.html","url":"https://alpibrusl.github.io/cancho-client-gen/","isPartOf":{"@id":"https://alpibrusl.github.io/cancho-client-gen/#site"}}]}</script>
+<style>
+
+:root {
+  --bg: #fbfbfc; --fg: #14171c; --muted: #566170; --line: #e1e4ea; --surface: #ffffff; --soft: #f0f3f6;
+  --accent: #265e8d; --accent-fg: #ffffff; --good: #0f7b5f; --warn: #92400e; --warn-bg: #fdf6e7; --warn-line: #e0b765; --bad: #d1362f;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1217; --fg: #e8eaee; --muted: #9ba5b3; --line: #232932; --surface: #141a21; --soft: #182029;
+    --accent: #6fa3d6; --accent-fg: #0a1522; --good: #4fd1a5; --warn: #f3c77a; --warn-bg: #1d1a12; --warn-line: #8a6a2a; --bad: #ff6b63; }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; scroll-padding-top: 4rem; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.6 var(--font); }
+a { color: var(--accent); text-underline-offset: .15em; }
+.wrap { width: 100%; max-width: 68rem; margin: 0 auto; padding: 0 20px; }
+.skip { position: absolute; left: 16px; top: -4rem; background: var(--accent); color: var(--accent-fg); padding: .5rem .8rem; border-radius: 6px; z-index: 9; }
+.skip:focus { top: 8px; }
+a:focus-visible, .btn:focus-visible, pre:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+header.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+header.top .wrap { display: flex; align-items: center; gap: 1.5rem; height: 3.4rem; }
+.brand { font: 700 1rem var(--mono); color: var(--fg); text-decoration: none; letter-spacing: -.01em; white-space: nowrap; }
+nav { display: flex; gap: 1.2rem; margin-left: auto; }
+nav a { color: var(--muted); text-decoration: none; font-size: .93rem; white-space: nowrap; }
+nav a:hover { color: var(--fg); }
+@media (max-width: 40rem) { nav a.opt { display: none; } }
+
+h1 { font-size: clamp(2.3rem, 6.2vw, 4rem); line-height: 1.04; letter-spacing: -.035em; margin: 0 0 1rem; font-weight: 750; }
+h2 { font-size: clamp(1.6rem, 3.4vw, 2.2rem); line-height: 1.15; letter-spacing: -.025em; margin: 0 0 .5rem; font-weight: 700; }
+h3 { font-size: 1.05rem; margin: 0 0 .25rem; }
+p { margin: 0 0 1rem; }
+section { padding: 4.5rem 0 0; }
+.lead { font-size: 1.2rem; color: var(--muted); max-width: 34rem; }
+.sub { color: var(--muted); max-width: 38rem; }
+code { font-family: var(--mono); font-size: .9em; background: var(--soft); padding: .1em .35em; border-radius: 5px; }
+
+.hero { padding: 4rem 0 0; display: grid; gap: 2.5rem; align-items: center; }
+@media (min-width: 58rem) { .hero { grid-template-columns: 1.05fr 1fr; } }
+.badge { display: inline-flex; gap: .5rem; align-items: center; font-size: .82rem; color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-line); padding: .22rem .7rem; border-radius: 999px; margin-bottom: 1.2rem; text-decoration: none; }
+.badge i { width: .5rem; height: .5rem; border-radius: 50%; background: var(--warn-line); display: inline-block; }
+.cta { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: 1.6rem; }
+.btn { display: inline-block; padding: .65rem 1.15rem; border-radius: 8px; font-weight: 600; text-decoration: none; border: 1px solid var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); }
+.btn.ghost { color: var(--accent); }
+.btn.ghost:hover { background: var(--soft); }
+
+.term { background: #0d1117; color: #d6dde8; border: 1px solid #262c36; border-radius: 12px; font: .84rem/1.65 var(--mono); padding: 1rem 1.1rem 1.1rem; box-shadow: 0 18px 50px -24px rgba(20, 30, 70, .55); overflow-x: auto; }
+.term .bar { display: flex; gap: .35rem; margin-bottom: .8rem; }
+.term .bar i { width: .65rem; height: .65rem; border-radius: 50%; background: #2d3440; display: block; }
+.term .c { color: #7d8797; } .term .g { color: #5fd3a6; } .term .b { color: #8cb0ff; } .term .y { color: #e8c170; } .term .r { color: #ff8b82; }
+.term pre { margin: 0; white-space: pre; }
+
+.three { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); margin-top: 3.2rem; }
+.three div { border-top: 3px solid var(--accent); padding-top: .8rem; }
+.three p { color: var(--muted); margin: 0; font-size: .96rem; }
+
+.grid { display: grid; gap: 1px; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-top: 2rem; }
+.grid div { background: var(--surface); padding: 1.1rem 1.2rem; }
+.grid p { color: var(--muted); font-size: .93rem; margin: 0; }
+
+.note { color: var(--muted); font-size: .88rem; margin-top: .9rem; }
+.status { margin-top: 4.5rem; background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 14px; padding: 1.3rem 1.5rem; }
+.status h2 { font-size: 1.2rem; letter-spacing: -.01em; }
+.status ul { margin: .4rem 0 0; padding-left: 1.2rem; color: var(--muted); }
+footer { margin-top: 4rem; border-top: 1px solid var(--line); padding: 1.6rem 0 2.6rem; color: var(--muted); font-size: .9rem; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: .5rem 1.6rem; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top"><div class="wrap">
+  <a class="brand" href="index.html">cancho-client-gen</a>
+  <nav aria-label="Sections">
+    <a href="index.html" aria-current="page" class="opt">Overview</a><a href="#why" class="opt">Why the document</a><a href="#slices" class="opt">Slices</a><a href="#status">Status</a>
+    <a href="https://github.com/alpibrusl/cancho-client-gen">GitHub</a>
+  </nav>
+</div></header>
+
+<main id="main" class="wrap">
+
+<div class="hero" id="top">
+  <div>
+    <a class="badge" href="#status"><i></i>Design &middot; the epic is open, the first slice is not started</a>
+    <h1>The contract, both ways.</h1>
+    <p class="lead">cancho-client-gen consumes the byte-verified OpenAPI 3.1 document that <a href="https://github.com/alpibrusl/cancho-web">cancho-web</a> generates and writes strictly typed client libraries, in the pgen tradition: <strong>cancho-pg turns <code>queries.sql</code> into typed cancho functions by asking the database; this turns <code>openapi.json</code> into typed clients by reading the document.</strong></p>
+    <div class="cta"><a class="btn primary" href="https://github.com/alpibrusl/cancho-client-gen/issues/2">The epic</a><a class="btn ghost" href="https://github.com/alpibrusl/cancho-client-gen#readme">The README</a></div>
+  </div>
+  <div class="term" role="img" aria-label="clientgen reads the checked-in openapi.json and writes a TypeScript client; git diff reports nothing to commit, so the generated client matches the document."><div class="bar"><i></i><i></i><i></i></div>
+<pre><span class="c">$</span> clientgen examples/users/openapi.json <span class="b">--typescript</span> -o clients/ts
+<span class="g">wrote clients/ts</span>  <span class="c"># 3 operations, 4 components</span>
+
+<span class="c"># the gate: CI regenerates and diffs</span>
+<span class="c">$</span> git diff --exit-code clients/ts
+<span class="c">$</span> <span class="g">echo $?</span>
+<span class="g">0</span></pre>
+  </div>
+</div>
+
+<div class="three">
+  <div><h3>One document</h3><p>The served document is pinned byte for byte by cancho-web's own test. This reads the file, not the running service, and nothing else.</p></div>
+  <div><h3>Typed both directions</h3><p>The server is held to the document by tests; the client is written from the document by this tool. Neither side hand-writes the other's half.</p></div>
+  <div><h3>pgen's discipline</h3><p><code>pgen</code> asks the database instead of trusting the <code>.sql</code> file; this refuses an invalid document instead of writing half a client.</p></div>
+</div>
+
+<section id="why">
+  <h2>Why the document, not the declaration.</h2>
+  <p class="sub">The declaration is a running program and a second source of truth: a generator that read it would have to run the service or re-read <code>.cho</code> source (<a href="https://github.com/alpibrusl/cancho-web/blob/main/docs/design.md">cancho-web's design &sect;9.9</a> says why the same argument rejected generated records there). The document is a file, already verified -- and consuming it keeps the tool useful for any OpenAPI 3.1 producer, not just cancho-web.</p>
+  <div class="grid">
+    <div><h3>Strict types, no coercion</h3><p>A response body that breaks the schema is refused, not coerced. Every error the document declares as <code>problem+json</code> (RFC 9457) is a typed error the client can switch on.</p></div>
+    <div><h3>A class per component</h3><p>A named shape in the document (<code>User</code>, <code>Page</code>, <code>Problem</code>) is a named class in the client, not an anonymous one. That is why this is sequenced after <a href="https://github.com/alpibrusl/cancho-web/issues/16">cancho-web#16</a>: components below the schema root written as <code>$ref</code>, not inline.</p></div>
+    <div><h3>The pgen gate</h3><p>Nothing is written for an invalid document: a file that does not validate as OpenAPI 3.1 produces no output and an error. Committed output, CI regenerates and diffs -- a change to the API is a change to a generated client that review sees.</p></div>
+    <div><h3>No foreign call</h3><p>The clients are cancho over <code>http.client</code>, and <code>cancho authority</code> on the generator itself reports what it can touch. A tool for cancho, built the way cancho's own tools are.</p></div>
+  </div>
+</section>
+
+<section id="slices">
+  <h2>Slices.</h2>
+  <p class="sub">The work is sequenced in <a href="https://github.com/alpibrusl/cancho-client-gen/issues/2">the epic (#2)</a> and its seven task issues: a JSON reader over cancho's own buffers that refuses an invalid document (#3); the model of paths, operations, parameters, bodies, responses and <code>$ref</code>-resolved components (#4); the TypeScript target (#5); the committed-output gate (#6); the Go target (#7); the Python target (#8); and the first consumer that is cancho itself, a cancho client over <code>http.client</code> (#9).</p>
+</section>
+
+<aside class="status" id="status">
+  <h2>Design: the epic is open, the first slice is not started</h2>
+  <p class="note" style="margin:.2rem 0 .6rem">Design means there is no <code>src/</code> yet; the quick-start shape is planned, not built. The epic and its tasks carry the full descriptions.</p>
+  <ul>
+    <li><strong>Not started:</strong> the first slice, a JSON reader over cancho's own buffers that refuses an invalid OpenAPI 3.1 file (<a href="https://github.com/alpibrusl/cancho-client-gen/issues/3">#3</a>).</li>
+    <li><strong>Sequenced after <a href="https://github.com/alpibrusl/cancho-web/issues/16">cancho-web#16</a>:</strong> components below the schema root written as <code>$ref</code>, not inline -- named shapes mean a class per component instead of anonymous ones.</li>
+    <li><strong>No CI workflow yet:</strong> there is no <code>src/</code> to build; that is the first slice.</li>
+  </ul>
+  <p style="margin:.8rem 0 0"><a href="https://github.com/alpibrusl/cancho-client-gen/issues/2">The epic</a> &middot; <a href="https://github.com/alpibrusl/cancho-web">cancho-web</a> &middot; <a href="https://github.com/alpibrusl/cancho-pg">cancho-pg</a> &middot; <a href="https://github.com/alpibrusl/cancho">cancho</a></p>
+</aside>
+
+</main>
+
+<footer><div class="wrap">
+  <a href="https://github.com/alpibrusl/cancho-client-gen">GitHub</a>
+  <a href="https://github.com/alpibrusl/cancho-client-gen/issues/2">The epic</a>
+  <a href="https://github.com/alpibrusl/cancho-web">cancho-web</a>
+  <a href="https://github.com/alpibrusl/cancho-pg">cancho-pg</a>
+  <span>A tool for cancho.</span><span>EUPL-1.2</span>
+</div></footer>
+</body>
+</html>
