@@ -22,11 +22,15 @@ client is written from the document by this tool, and neither side hand-writes t
 
 ## Status
 
-**Design. The epic is open, the first slice is not started.** There is no `src/` yet; the work is sequenced in
-[the epic (#2)](https://github.com/alpibrusl/cancho-client-gen/issues/2) and its seven task issues (#3–#9).
-Sequenced after [cancho-web#16](https://github.com/alpibrusl/cancho-web/issues/16): components used below the
-schema root must be written as `$ref`, not inline -- named shapes mean a class per component instead of an
-anonymous one, and a client generator is the consumer that wants them.
+**Slice 1 built: the reader.** [`src/clientgen.cho`](src/clientgen.cho) reads the document with `std.json`'s
+tape -- no copy, no foreign code -- and refuses what is not an OpenAPI 3.1 document: nine refusals, each saying
+what a client needs and where it is missing, and nothing written for an invalid one (pgen's discipline).
+`clientgen <doc> --check` answers whether a client can come from the document, and counts what it found: the
+byte-verified `examples/users/openapi.json` reads as `ok 3 paths, 5 operations, 2 components`. The work is
+sequenced in [the epic (#2)](https://github.com/alpibrusl/cancho-client-gen/issues/2); slices 2–7 (#4–#9) are
+not started. Sequenced after [cancho-web#16](https://github.com/alpibrusl/cancho-web/issues/16): components
+used below the schema root must be written as `$ref`, not inline -- named shapes mean a class per component
+instead of an anonymous one, and a client generator is the consumer that wants them.
 
 ## What you get
 
@@ -46,14 +50,25 @@ anonymous one, and a client generator is the consumer that wants them.
 
 ## Requirements
 
-- Nothing yet: this repository is at the design stage (the first slice, a JSON reader over cancho's own
-  buffers, is [issue #3](https://github.com/alpibrusl/cancho-client-gen/issues/3)). When there is a `src/`,
-  the requirements will be the **cancho** compiler at the revision this repository's CI builds with, plus Rust
-  to build it.
+- The **cancho** compiler at the revision this repository's CI builds with (`CANCHO_REV` in
+  [`.github/workflows/ci.yml`](.github/workflows/ci.yml)). A package store records no hash of the `std` it was
+  published with, so the compiler revision is part of the contract.
+- Rust, to build that compiler (its `rust-toolchain.toml` pins the toolchain).
+- `python3`, to run the end-to-end tests.
 
 ## Quick start
 
-The planned shape (not built yet; the gate that makes it a gate is
+The reader is built; the writers are slices 4–6 ([#5](https://github.com/alpibrusl/cancho-client-gen/issues/5),
+[#7](https://github.com/alpibrusl/cancho-client-gen/issues/7), [#8](https://github.com/alpibrusl/cancho-client-gen/issues/8)).
+What runs today is the gate's first half -- the answer to "is this the document a client can come from":
+
+```
+scripts/build.sh build/clientgen
+build/clientgen examples/users/openapi.json --check
+ok 3 paths, 5 operations, 2 components
+```
+
+The planned shape, once the TypeScript target lands (the gate's committed-output half is
 [issue #6](https://github.com/alpibrusl/cancho-client-gen/issues/6)):
 
 ```
@@ -64,7 +79,11 @@ git diff --exit-code clients/ts
 ## Repository layout
 
 ```
-README.md                 this file
+src/clientgen.cho         the reader: `std.json`'s tape, the document's shape, the refusals; --check
+examples/users/openapi.json  cancho-web's byte-verified document, the first test input
+tests/e2e.py              the end-to-end tests: the document read, every refusal exercised
+scripts/build.sh          build against the pinned compiler
+docs/authority.json       what the tool can touch, as last approved; CI fails when it changes
 docs/index.html           the project page
 LICENSE                   EUPL-1.2
 ```

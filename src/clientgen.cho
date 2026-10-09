@@ -1,0 +1,373 @@
+edition 5;
+
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.json;
+
+// `clientgen` -- strictly typed clients from the byte-verified OpenAPI document.
+//
+//     clientgen <openapi.json> [--check]
+//
+// The first slice: read the document, refuse what is not a document. The file is
+// parsed with `std.json`'s reader (a tape over the file's own bytes, no copy, no
+// foreign code) and walked where a client generator looks: `openapi`, `info`,
+// `paths`, and `components`. A file that is not valid JSON is refused with the
+// parser's own error and where it stopped; a JSON file that is not an OpenAPI
+// 3.1 document is refused with what is missing and where. Nothing is written
+// for an invalid document -- pgen's discipline: a query the server refuses never
+// reaches a build, and a document that does not parse never reaches a client.
+//
+// `--check` answers 0/1 for "is this the document a client can come from" and
+// prints what it found (the gate slice builds on it: CI regenerates and diffs).
+//
+// `cancho authority` on it reports `args`, `heap`, `fs_read("")`, the console --
+// and no `ffi`.
+
+// The most a document may be: 8 MiB, like a body the users example will take.
+fn most_bytes() -> [] int {
+    return 8388608;
+}
+
+// A decimal number, or -1 for empty text, a non-digit, or more than 17 digits.
+fn number_of[&t](text: &t [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 17 {
+        return 0 - 1;
+    }
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        let c = int_of(text[i]);
+        if c < 48 || c > 57 {
+            return 0 - 1;
+        }
+        n = n * 10 + (c - 48);
+        i = i + 1;
+    }
+    return n;
+}
+
+fn complain[&i, &n, &w](io: &!i Io, name: &n [byte], what: &w [byte]) -> [err_write] int {
+    io.error_all(io, "clientgen: ");
+    io.error_all(io, name);
+    io.error_all(io, ": ");
+    io.error_all(io, what);
+    io.error_all(io, "\n");
+    return 1;
+}
+
+// ---------------------------------------------------------------------
+// The shape this slice reads
+// ---------------------------------------------------------------------
+
+// Everything a reader of the document has to know at this slice. Later slices
+// grow it (paths, operations, parameters, bodies, responses, $ref-resolved
+// components are #4); this one only says whether the file *is* a document and
+// how large it is.
+pub res struct Document {
+    paths: int,
+    operations: int,
+    components: int,
+}
+
+// The methods of an operation. `at` and `count` walk the tape; this is the
+// one place that knows which key is which.
+fn method_of(method: int) -> [] &static [byte] {
+    if method == 0 {
+        return "get";
+    }
+    if method == 1 {
+        return "put";
+    }
+    if method == 2 {
+        return "post";
+    }
+    if method == 3 {
+        return "delete";
+    }
+    if method == 4 {
+        return "options";
+    }
+    if method == 5 {
+        return "head";
+    }
+    if method == 6 {
+        return "patch";
+    }
+    if method == 7 {
+        return "trace";
+    }
+    return "";
+}
+
+fn method_index[&s, &t](src: &s [byte], tape: &t [int], i: int) -> [] int {
+    if json.string_equals(src, tape, i, "get") {
+        return 0;
+    }
+    if json.string_equals(src, tape, i, "put") {
+        return 1;
+    }
+    if json.string_equals(src, tape, i, "post") {
+        return 2;
+    }
+    if json.string_equals(src, tape, i, "delete") {
+        return 3;
+    }
+    if json.string_equals(src, tape, i, "options") {
+        return 4;
+    }
+    if json.string_equals(src, tape, i, "head") {
+        return 5;
+    }
+    if json.string_equals(src, tape, i, "patch") {
+        return 6;
+    }
+    if json.string_equals(src, tape, i, "trace") {
+        return 7;
+    }
+    return 0 - 1;
+}
+
+// The number of operations in `paths`: one per method key found in each path
+// item (a `parameters` key at the item level is not one).
+fn count_operations[&s, &t](src: &s [byte], tape: &t [int], paths: int) -> [] int {
+    var total = 0;
+    var j = paths + 1;
+    var left = json.count(tape, paths);
+    while left > 0 {
+        // `j` is the path name, `j + 1` the item.
+        if json.is_object(tape, j + 1) {
+            var k = j + 2;
+            var pairs = json.count(tape, j + 1);
+            while pairs > 0 {
+                if method_index(src, tape, k) >= 0 {
+                    total = total + 1;
+                }
+                k = json.skip(tape, k + 1);
+                pairs = pairs - 1;
+            }
+        }
+        j = json.skip(tape, j + 1);
+        left = left - 1;
+    }
+    return total;
+}
+
+// ---------------------------------------------------------------------
+// Reading the document
+// ---------------------------------------------------------------------
+
+// Walk the parsed tape and answer a `Document`, or `(-1, kind of refusal)`.
+//
+// Refusals:
+//   1  the root is not an object
+//   2  `openapi` is missing or not a string
+//   3  `openapi` is not "3.1.x"
+//   4  `info` is missing or not an object
+//   5  `info.title` is missing or not a string
+//   6  `info.version` is missing or not a string
+//   7  `paths` is missing or not an object
+//   8  `components` is present and not an object
+//   9  a path in `paths` is not an object
+//
+// The refusals say what a client needs from the document before any typing:
+// which OpenAPI it speaks, who it is, and where the operations are.
+pub fn read[&s, &t](src: &s [byte], tape: &t [int], nodes: int) -> [] (Document, int) {
+    if nodes < 1 || !json.is_object(tape, 0) {
+        return (Document { paths: 0, operations: 0, components: 0 }, 1);
+    }
+    let version = json.get(src, tape, 0, "openapi");
+    if version < 0 || !json.is_string(tape, version) {
+        return (Document { paths: 0, operations: 0, components: 0 }, 2);
+    }
+    if !version_31(src, tape, version) {
+        return (Document { paths: 0, operations: 0, components: 0 }, 3);
+    }
+    let info = json.get(src, tape, 0, "info");
+    if info < 0 || !json.is_object(tape, info) {
+        return (Document { paths: 0, operations: 0, components: 0 }, 4);
+    }
+    let title = json.get(src, tape, info, "title");
+    if title < 0 || !json.is_string(tape, title) {
+        return (Document { paths: 0, operations: 0, components: 0 }, 5);
+    }
+    let ver = json.get(src, tape, info, "version");
+    if ver < 0 || !json.is_string(tape, ver) {
+        return (Document { paths: 0, operations: 0, components: 0 }, 6);
+    }
+    let paths = json.get(src, tape, 0, "paths");
+    if paths < 0 || !json.is_object(tape, paths) {
+        return (Document { paths: 0, operations: 0, components: 0 }, 7);
+    }
+    var components = 0;
+    let comps = json.get(src, tape, 0, "components");
+    if comps >= 0 {
+        if !json.is_object(tape, comps) {
+            return (Document { paths: 0, operations: 0, components: 0 }, 8);
+        }
+        components = json.count(tape, comps);
+    }
+    // A path item that is not an object is a document that cannot be walked.
+    var j = paths + 1;
+    var left = json.count(tape, paths);
+    while left > 0 {
+        if !json.is_object(tape, j + 1) {
+            return (Document { paths: 0, operations: 0, components: 0 }, 9);
+        }
+        j = json.skip(tape, j + 1);
+        left = left - 1;
+    }
+    return (Document { paths: json.count(tape, paths), operations: count_operations(src, tape, paths), components: components }, 0);
+}
+
+// `"3.1.0"`, `"3.1.1"`, ...: five bytes, `3`, `.`, `1`, `.`, then digits.
+fn version_31[&s, &t](src: &s [byte], tape: &t [int], i: int) -> [] bool {
+    if !json.string_plain(tape, i) {
+        return false;
+    }
+    let text = json.string_view(src, tape, i);
+    if len(text) < 5 {
+        return false;
+    }
+    if int_of(text[0]) != 51 || int_of(text[1]) != 46 || int_of(text[2]) != 49 || int_of(text[3]) != 46 {
+        return false;
+    }
+    var p = 4;
+    while p < len(text) {
+        if !bytes.is_digit(int_of(text[p])) {
+            return false;
+        }
+        p = p + 1;
+    }
+    return true;
+}
+
+// The one-line reason for a refusal, for the error the tool prints.
+pub fn refusal_name(code: int) -> [] &static [byte] {
+    if code == 1 {
+        return "the root is not a JSON object";
+    }
+    if code == 2 {
+        return "`openapi` is missing or not a string";
+    }
+    if code == 3 {
+        return "`openapi` is not 3.1";
+    }
+    if code == 4 {
+        return "`info` is missing or not an object";
+    }
+    if code == 5 {
+        return "`info.title` is missing or not a string";
+    }
+    if code == 6 {
+        return "`info.version` is missing or not a string";
+    }
+    if code == 7 {
+        return "`paths` is missing or not an object";
+    }
+    if code == 8 {
+        return "`components` is not an object";
+    }
+    if code == 9 {
+        return "a path item is not an object";
+    }
+    return "unknown";
+}
+
+// ---------------------------------------------------------------------
+// The tool
+// ---------------------------------------------------------------------
+
+// `clientgen <openapi.json> [--check]` -- read the document, or refuse it.
+fn run[&h, &g, &i, &z](heap: &!h Heap, args: &g Args, io: &!i Io, fs: &z Fs("")) -> [heap, args, io_write, err_write, fs_read("")] int {
+    let path = arg(args, 1);
+    let checking = arg_count(args) > 2 && bytes.equal(arg(args, 2), "--check");
+    let source = box_slice(heap, most_bytes() + 1, byte_of(0));
+    var got = 0 - 1;
+    if bytes.find(path, "..") < 0 {
+        borrow mut source as &!sw in {
+            got = fs_read(fs, path, contents(sw));
+        }
+    }
+    var status = 1;
+    if bytes.find(path, "..") >= 0 {
+        complain(io, path, "a path with `..` in it is refused (the file capability traps on it); give the path without");
+    } else if got < 0 {
+        complain(io, path, "cannot read that file");
+    } else if got > most_bytes() {
+        complain(io, path, "the document is over 8 MiB");
+    } else {
+        borrow source as &sr in {
+            let text = contents(sr)[0..got];
+            let tape = box_slice(heap, json.tape_len(text), 0);
+            borrow mut tape as &!tw in {
+                let tp = contents(tw);
+                let nodes = json.parse(text, tp);
+                if nodes < 0 {
+                    var detail = buffer.append(heap, buffer.empty(heap, 64), "not valid JSON: ");
+                    detail = buffer.append(heap, detail, json.error_message(json.error_code(nodes)));
+                    detail = buffer.append(heap, detail, " at byte ");
+                    detail = buffer.push_nat(heap, detail, json.error_position(nodes));
+                    borrow detail as &db in {
+                        complain(io, path, buffer.bytes(db));
+                    }
+                    buffer.drop(heap, detail);
+                } else {
+                    let (doc, refused) = read(text, tp, nodes);
+                    // One destructure for every branch: a `res` value is consumed exactly once, on every path.
+                    let Document { paths, operations, components } = doc;
+                    if refused > 0 {
+                        complain(io, path, refusal_name(refused));
+                    } else if checking {
+                        // The gate's answer: a document a client can come from.
+                        var line = buffer.append(heap, buffer.empty(heap, 64), "ok ");
+                        line = buffer.push_nat(heap, line, paths);
+                        line = buffer.append(heap, line, " paths, ");
+                        line = buffer.push_nat(heap, line, operations);
+                        line = buffer.append(heap, line, " operations, ");
+                        line = buffer.push_nat(heap, line, components);
+                        line = buffer.append(heap, line, " components\n");
+                        borrow line as &lb in {
+                            io.write_all(io, buffer.bytes(lb));
+                        }
+                        buffer.drop(heap, line);
+                        status = 0;
+                    } else {
+                        // The next slices write the client here (#5, #7, #8).
+                        complain(io, path, "the reader is built, the writers are not: --check answers whether a client can come from this document (issues #5, #7, #8)");
+                    }
+                }
+            }
+            unbox_slice(heap, tape);
+        }
+    }
+    unbox_slice(heap, source);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    var status = 1;
+    borrow mut io as &!ie in {
+        borrow fs as &z in {
+            borrow args as &g in {
+                if arg_count(g) < 2 || arg_count(g) > 3 {
+                    io.error_all(ie, "usage: clientgen <openapi.json> [--check]\n");
+                    status = 2;
+                } else {
+                    borrow mut heap as &!h in {
+                        status = run(h, g, ie, z);
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(io);
+    release(heap);
+    return status;
+}
