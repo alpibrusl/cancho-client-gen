@@ -1,0 +1,1134 @@
+edition 5;
+module model;
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import std.list;
+import std.option;
+
+// The model of the document (#4): what the readers and the writers share.
+//
+// Built from the parsed tape of `std.json`, into cancho types -- the
+// enum-and-struct discipline cancho-web#27 names: an enum per thing with
+// variants, a struct per variant, no tag ints. The tree owns its text (one
+// `buffer.Buffer` a component, as `web` keeps its text pool) and is `res`
+// all the way down, so the checker holds the writer to freeing it.
+//
+// `$ref` resolution: a reference under `#/components/schemas/` becomes the
+// component's *name* in the model, and a document whose `$ref` points
+// nowhere is an error, not a best-effort inline (a named shape is a class
+// per component; an unresolved one is a document that cannot be typed).
+//
+// A schema the model cannot name structurally (until cancho-web#16 lands,
+// array `items` and nested objects arrive inline) is kept as its JSON: the
+// model holds the tape's own bytes for it, and the writer reads them. When
+// cancho-web#16 lands, those become names too and this comment shrinks.
+
+// ---------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------
+
+// Every way a document can be refused at this slice, named. Codes 1-9 are
+// the reader's (issue #3); 10 on are the model's: the checks
+// `openapi-spec-validator` makes that the reader's shape walk does not.
+pub enum Refusal {
+    // The reader's nine (issue #3).
+    RootNotObject,
+    OpenApiMissing,
+    OpenApiNot31,
+    InfoMissing,
+    InfoTitleMissing,
+    InfoVersionMissing,
+    PathsMissing,
+    ComponentsNotObject,
+    PathItemNotObject,
+    // The model's (issue #4).
+    OperationNoResponses,
+    OperationIdMissing,
+    ParameterNoSchema,
+    ParameterBadIn,
+    ParameterBadRequired,
+    RefNowhere,
+    RefNotSchemas,
+    ResponseBadStatus,
+    SchemaUnknownKind,
+    // A `pub fn refusal_name` needs one past the last, for the error text.
+    Count,
+}
+
+pub fn refusal_name(r: Refusal) -> [] &static [byte] {
+    match r {
+        Refusal::RootNotObject => {
+            return "the root is not a JSON object";
+        }
+        Refusal::OpenApiMissing => {
+            return "`openapi` is missing or not a string";
+        }
+        Refusal::OpenApiNot31 => {
+            return "`openapi` is not 3.1";
+        }
+        Refusal::InfoMissing => {
+            return "`info` is missing or not an object";
+        }
+        Refusal::InfoTitleMissing => {
+            return "`info.title` is missing or not a string";
+        }
+        Refusal::InfoVersionMissing => {
+            return "`info.version` is missing or not a string";
+        }
+        Refusal::PathsMissing => {
+            return "`paths` is missing or not an object";
+        }
+        Refusal::ComponentsNotObject => {
+            return "`components` is not an object";
+        }
+        Refusal::PathItemNotObject => {
+            return "a path item is not an object";
+        }
+        Refusal::OperationNoResponses => {
+            return "an operation has no `responses`";
+        }
+        Refusal::OperationIdMissing => {
+            return "an operation has no `operationId`";
+        }
+        Refusal::ParameterNoSchema => {
+            return "a parameter has no `schema`";
+        }
+        Refusal::ParameterBadIn => {
+            return "a parameter's `in` is not path, query or header";
+        }
+        Refusal::ParameterBadRequired => {
+            return "a parameter's `required` is not a boolean";
+        }
+        Refusal::RefNowhere => {
+            return "a `$ref` points nowhere";
+        }
+        Refusal::RefNotSchemas => {
+            return "a `$ref` is not under `#/components/schemas/`";
+        }
+        Refusal::ResponseBadStatus => {
+            return "a response key is not a status";
+        }
+        Refusal::SchemaUnknownKind => {
+            return "a schema is of no kind the model names";
+        }
+        Refusal::Count => {
+            return "unknown";
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
+// The model
+// ---------------------------------------------------------------------
+
+// An HTTP method. The document's lower-case key, as a variant, not an int.
+pub enum Method {
+    Get,
+    Put,
+    Post,
+    Delete,
+    Options,
+    Head,
+    Patch,
+    Trace,
+}
+
+pub fn method_name(m: Method) -> [] &static [byte] {
+    match m {
+        Method::Get => {
+            return "get";
+        }
+        Method::Put => {
+            return "put";
+        }
+        Method::Post => {
+            return "post";
+        }
+        Method::Delete => {
+            return "delete";
+        }
+        Method::Options => {
+            return "options";
+        }
+        Method::Head => {
+            return "head";
+        }
+        Method::Patch => {
+            return "patch";
+        }
+        Method::Trace => {
+            return "trace";
+        }
+    }
+}
+
+// Where a parameter lives. The document's `in`, as a variant.
+pub enum Where {
+    InPath,
+    InQuery,
+    InHeader,
+}
+
+pub fn where_name(w: Where) -> [] &static [byte] {
+    match w {
+        Where::InPath => {
+            return "path";
+        }
+        Where::InQuery => {
+            return "query";
+        }
+        Where::InHeader => {
+            return "header";
+        }
+    }
+}
+
+// A schema: named (a `$ref` the document resolves), or its kind kept
+// structurally. `Ref` holds the component's *name* -- the whole point of
+// resolution. `Structural` keeps the kind the model names and the bounds
+// that go with it; anything else is `Refusal::SchemaUnknownKind` at build
+// time, because a client of strict types has nothing to write for a shape
+// it cannot name.
+pub enum Schema {
+    // A resolved `$ref`: the component's name, owned.
+    Ref(buffer.Buffer),
+    Boolean,
+    Integer,
+    Number,
+    String,
+    Array(Box[Schema]),
+    Object,
+}
+
+// A parameter: its name, where it lives, whether it must be there, and the
+// schema that types it.
+pub res struct Parameter {
+    name: buffer.Buffer,
+    place: Where,
+    required: bool,
+    schema: Schema,
+}
+
+// A response: the status and the schema of its `application/json` body,
+// if it has one. `204` and the like have no body: `None`.
+pub res struct Response {
+    status: int,
+    body: option.Option[Schema],
+}
+
+// An operation: its id, its method, its path (owned text), its parameters,
+// its request body (with whether it may be left out), and its responses.
+pub res struct Operation {
+    id: buffer.Buffer,
+    method: Method,
+    path: buffer.Buffer,
+    parameters: list.List[Parameter],
+    // The request body's schema, and `true` when the body may be absent.
+    body: option.Option[Schema],
+    body_optional: bool,
+    responses: list.List[Response],
+}
+
+// A named component under `components/schemas`: its name and its schema.
+pub res struct Component {
+    name: buffer.Buffer,
+    schema: Schema,
+}
+
+// The document: every operation, and every named component, in document
+// order (the order the client's reader meets them, which is also the order
+// a writer emits them in).
+pub res struct Doc {
+    operations: list.List[Operation],
+    components: list.List[Component],
+}
+
+// Did a read come back clean? A refusal is an int code, 0 for clean, so
+// the walks can compare and carry it without owning anything.
+fn refusal_ok(code: int) -> [] bool {
+    return code == 0;
+}
+
+// The named refusal for a code, so a tool can print it.
+pub fn refusal_of(code: int) -> [] Refusal {
+    if code == 1 {
+        return Refusal::RootNotObject;
+    }
+    if code == 2 {
+        return Refusal::OpenApiMissing;
+    }
+    if code == 3 {
+        return Refusal::OpenApiNot31;
+    }
+    if code == 4 {
+        return Refusal::InfoMissing;
+    }
+    if code == 5 {
+        return Refusal::InfoTitleMissing;
+    }
+    if code == 6 {
+        return Refusal::InfoVersionMissing;
+    }
+    if code == 7 {
+        return Refusal::PathsMissing;
+    }
+    if code == 8 {
+        return Refusal::ComponentsNotObject;
+    }
+    if code == 9 {
+        return Refusal::PathItemNotObject;
+    }
+    if code == 10 {
+        return Refusal::OperationNoResponses;
+    }
+    if code == 11 {
+        return Refusal::OperationIdMissing;
+    }
+    if code == 12 {
+        return Refusal::ParameterNoSchema;
+    }
+    if code == 13 {
+        return Refusal::ParameterBadIn;
+    }
+    if code == 14 {
+        return Refusal::ParameterBadRequired;
+    }
+    if code == 15 {
+        return Refusal::RefNowhere;
+    }
+    if code == 16 {
+        return Refusal::RefNotSchemas;
+    }
+    if code == 17 {
+        return Refusal::ResponseBadStatus;
+    }
+    if code == 18 {
+        return Refusal::SchemaUnknownKind;
+    }
+    return Refusal::Count;
+}
+
+// The code of a named refusal, for the plumbing between the readers.
+pub fn code_of(r: Refusal) -> [] int {
+    match r {
+        Refusal::RootNotObject => {
+            return 1;
+        }
+        Refusal::OpenApiMissing => {
+            return 2;
+        }
+        Refusal::OpenApiNot31 => {
+            return 3;
+        }
+        Refusal::InfoMissing => {
+            return 4;
+        }
+        Refusal::InfoTitleMissing => {
+            return 5;
+        }
+        Refusal::InfoVersionMissing => {
+            return 6;
+        }
+        Refusal::PathsMissing => {
+            return 7;
+        }
+        Refusal::ComponentsNotObject => {
+            return 8;
+        }
+        Refusal::PathItemNotObject => {
+            return 9;
+        }
+        Refusal::OperationNoResponses => {
+            return 10;
+        }
+        Refusal::OperationIdMissing => {
+            return 11;
+        }
+        Refusal::ParameterNoSchema => {
+            return 12;
+        }
+        Refusal::ParameterBadIn => {
+            return 13;
+        }
+        Refusal::ParameterBadRequired => {
+            return 14;
+        }
+        Refusal::RefNowhere => {
+            return 15;
+        }
+        Refusal::RefNotSchemas => {
+            return 16;
+        }
+        Refusal::ResponseBadStatus => {
+            return 17;
+        }
+        Refusal::SchemaUnknownKind => {
+            return 18;
+        }
+        Refusal::Count => {
+            return 0;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
+// `$ref` resolution's other half: a name that points nowhere
+// ---------------------------------------------------------------------
+
+// The names under `components.schemas`, newline-separated in one buffer, so
+// a `$ref` is checked against them as it is read -- a reference that points
+// nowhere is an error when it is made, not a surprise in a generated client.
+fn schema_names[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 128);
+    let comps = json.get(src, tape, 0, "components");
+    if comps >= 0 && json.is_object(tape, comps) {
+        let schemas = json.get(src, tape, comps, "schemas");
+        if schemas >= 0 && json.is_object(tape, schemas) {
+            var k = schemas + 1;
+            var left = json.count(tape, schemas);
+            while left > 0 {
+                out = buffer.append(heap, out, json.string_view(src, tape, k));
+                out = buffer.push(heap, out, byte_of(10));
+                k = json.skip(tape, k + 1);
+                left = left - 1;
+            }
+        }
+    }
+    return out;
+}
+
+// Is `name` one of the newline-separated names?
+fn named[&b, &n](all: &b [byte], name: &n [byte]) -> [] bool {
+    var at = 0;
+    while at < len(all) {
+        var end = at;
+        while end < len(all) && int_of(all[end]) != 10 {
+            end = end + 1;
+        }
+        if bytes.equal(all[at..end], name) {
+            return true;
+        }
+        at = end + 1;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------
+// Reading the tape into the model
+// ---------------------------------------------------------------------
+
+// The tape is walked with `json.at`/`json.count`/`json.skip` over borrowed
+// `&[byte]`, and the model's text is copied into `buffer.Buffer`s as it is
+// read, so the tree owns everything it holds.
+
+// `s` must be a plain string (no escapes) at this slice: names, ids and
+// paths in a document are plain ASCII, and `json.string_plain` is the
+// check that they are. (An escaped name is not refused -- it is read with
+// `string_into`, which exists for exactly this; the first document that
+// needs it will say so.)
+fn text_of[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], i: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    out = buffer.append(heap, out, json.string_view(src, tape, i));
+    return out;
+}
+
+// The method key of a path item, or none.
+fn method_of[&s, &t](src: &s [byte], tape: &t [int], i: int) -> [] option.Option[Method] {
+    if json.string_equals(src, tape, i, "get") {
+        return option.Option::Some(Method::Get);
+    }
+    if json.string_equals(src, tape, i, "put") {
+        return option.Option::Some(Method::Put);
+    }
+    if json.string_equals(src, tape, i, "post") {
+        return option.Option::Some(Method::Post);
+    }
+    if json.string_equals(src, tape, i, "delete") {
+        return option.Option::Some(Method::Delete);
+    }
+    if json.string_equals(src, tape, i, "options") {
+        return option.Option::Some(Method::Options);
+    }
+    if json.string_equals(src, tape, i, "head") {
+        return option.Option::Some(Method::Head);
+    }
+    if json.string_equals(src, tape, i, "patch") {
+        return option.Option::Some(Method::Patch);
+    }
+    if json.string_equals(src, tape, i, "trace") {
+        return option.Option::Some(Method::Trace);
+    }
+    return option.Option::None;
+}
+
+// Does the string at `i` start with `prefix`, byte for byte?
+fn starts[&s, &t, &p](src: &s [byte], tape: &t [int], i: int, prefix: &p [byte]) -> [] bool {
+    if !json.string_plain(tape, i) {
+        return false;
+    }
+    let text = json.string_view(src, tape, i);
+    return bytes.starts_with(text, prefix);
+}
+
+// The prefix length of `#/components/schemas/`.
+fn ref_prefix_len() -> [] int {
+    return 21;
+}
+
+// Read one schema node into the model. `depth` bounds the recursion: a
+// document nested deeper than any real one is refused, not crashed.
+pub fn read_schema[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte], i: int, depth: int) -> [heap] (Schema, int) {
+    if depth > 32 {
+        return (Schema::Object, code_of(Refusal::SchemaUnknownKind));
+    }
+    if !json.is_object(tape, i) {
+        return (Schema::Object, code_of(Refusal::SchemaUnknownKind));
+    }
+    // A `$ref` is the one key that makes a schema named.
+    let r = json.get(src, tape, i, "$ref");
+    if r >= 0 && json.is_string(tape, r) {
+        let text = json.string_view(src, tape, r);
+        let prefix: &static [byte] = "#/components/schemas/";
+        if !bytes.starts_with(text, prefix) {
+            return (Schema::Object, code_of(Refusal::RefNotSchemas));
+        }
+        let cut = ref_prefix_len();
+        if !named(names, text[cut..len(text)]) {
+            return (Schema::Object, code_of(Refusal::RefNowhere));
+        }
+        var out = buffer.empty(heap, 32);
+        out = buffer.append(heap, out, text[cut..len(text)]);
+        return (Schema::Ref(out), 0);
+    }
+    // No `$ref`: the kind the model names, or a refusal.
+    let t = json.get(src, tape, i, "type");
+    if t < 0 || !json.is_string(tape, t) {
+        return (Schema::Object, code_of(Refusal::SchemaUnknownKind));
+    }
+    if json.string_equals(src, tape, t, "boolean") {
+        return (Schema::Boolean, 0);
+    }
+    if json.string_equals(src, tape, t, "integer") {
+        return (Schema::Integer, 0);
+    }
+    if json.string_equals(src, tape, t, "number") {
+        return (Schema::Number, 0);
+    }
+    if json.string_equals(src, tape, t, "string") {
+        return (Schema::String, 0);
+    }
+    if json.string_equals(src, tape, t, "object") {
+        return (Schema::Object, 0);
+    }
+    if json.string_equals(src, tape, t, "array") {
+        let items = json.get(src, tape, i, "items");
+        if items < 0 {
+            return (Schema::Object, code_of(Refusal::SchemaUnknownKind));
+        }
+        let (inner, bad) = read_schema(heap, src, tape, names, items, depth + 1);
+        if !refusal_ok(bad) {
+            drop_schema(heap, inner);
+            return (Schema::Object, bad);
+        }
+        return (Schema::Array(box(heap, inner)), 0);
+    }
+    return (Schema::Object, code_of(Refusal::SchemaUnknownKind));
+}
+
+// Read one parameter of an operation.
+fn read_parameter[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte], i: int) -> [heap] (Parameter, int) {
+    let name_at = json.get(src, tape, i, "name");
+    let in_at = json.get(src, tape, i, "in");
+    let schema_at = json.get(src, tape, i, "schema");
+    if name_at < 0 || !json.is_string(tape, name_at) {
+        return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: Schema::Object }, code_of(Refusal::ParameterNoSchema));
+    }
+    var w = Where::InQuery;
+    if in_at >= 0 && json.is_string(tape, in_at) {
+        if json.string_equals(src, tape, in_at, "path") {
+            w = Where::InPath;
+        } else if json.string_equals(src, tape, in_at, "query") {
+            w = Where::InQuery;
+        } else if json.string_equals(src, tape, in_at, "header") {
+            w = Where::InHeader;
+        } else {
+            return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: Schema::Object }, code_of(Refusal::ParameterBadIn));
+        }
+    } else {
+        return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: Schema::Object }, code_of(Refusal::ParameterBadIn));
+    }
+    var req = false;
+    let req_at = json.get(src, tape, i, "required");
+    if req_at >= 0 {
+        if json.is_bool(tape, req_at) {
+            req = json.to_bool(tape, req_at);
+        } else {
+            return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: Schema::Object }, code_of(Refusal::ParameterBadRequired));
+        }
+    }
+    if schema_at < 0 || !json.is_object(tape, schema_at) {
+        return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: Schema::Object }, code_of(Refusal::ParameterNoSchema));
+    }
+    let (schema, bad) = read_schema(heap, src, tape, names, schema_at, 0);
+    if !refusal_ok(bad) {
+        drop_schema(heap, schema);
+        return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: Schema::Object }, bad);
+    }
+    let name = text_of(heap, src, tape, name_at);
+    return (Parameter { name: name, place: w, required: req, schema: schema }, 0);
+}
+
+fn read_parameters[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte], arr: int) -> [heap] (list.List[Parameter], int) {
+    var out = list.List::Empty;
+    var j = arr + 1;
+    var left = json.count(tape, arr);
+    while left > 0 {
+        let (one, bad) = read_parameter(heap, src, tape, names, j);
+        if !refusal_ok(bad) {
+            drop_parameter(heap, one);
+            drop_parameters(heap, out);
+            return (list.List::Empty, bad);
+        }
+        out = list.push(heap, out, one);
+        j = json.skip(tape, j);
+        left = left - 1;
+    }
+    return (out, 0);
+}
+
+// The body of a response: `content.application/json.schema`, if there is one.
+// `None` for no `application/json` content. The schema read is the last thing,
+// so a refusal has nothing live.
+fn read_body[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte], value: int) -> [heap] (option.Option[Schema], int) {
+    // A response may be a `$ref` to a named response component (`422` in the
+    // users document is). Follow it: the component's content is the body.
+    let r = json.get(src, tape, value, "$ref");
+    if r >= 0 && json.is_string(tape, r) {
+        let text = json.string_view(src, tape, r);
+        let prefix: &static [byte] = "#/components/responses/";
+        if !bytes.starts_with(text, prefix) {
+            return (option.Option::None, code_of(Refusal::RefNotSchemas));
+        }
+        let cut = len(prefix);
+        let name = text[cut..len(text)];
+        let comps = json.get(src, tape, 0, "components");
+        if comps >= 0 && json.is_object(tape, comps) {
+            let responses = json.get(src, tape, comps, "responses");
+            if responses >= 0 && json.is_object(tape, responses) {
+                let at = json.get(src, tape, responses, name);
+                if at >= 0 && json.is_object(tape, at) {
+                    return read_body_content(heap, src, tape, names, at);
+                }
+            }
+        }
+        return (option.Option::None, code_of(Refusal::RefNowhere));
+    }
+    return read_body_content(heap, src, tape, names, value);
+}
+
+// The `content.application/json.schema` of a response object, if it has one.
+fn read_body_content[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte], value: int) -> [heap] (option.Option[Schema], int) {
+    let content = json.get(src, tape, value, "content");
+    if content < 0 || !json.is_object(tape, content) {
+        return (option.Option::None, 0);
+    }
+    // `application/json` first; `application/problem+json` is the typed error
+    // (RFC 9457), and a client that switches on it needs its schema too.
+    var json_media = json.get(src, tape, content, "application/json");
+    if json_media < 0 || !json.is_object(tape, json_media) {
+        json_media = json.get(src, tape, content, "application/problem+json");
+    }
+    if json_media < 0 || !json.is_object(tape, json_media) {
+        return (option.Option::None, 0);
+    }
+    let schema_at = json.get(src, tape, json_media, "schema");
+    if schema_at < 0 || !json.is_object(tape, schema_at) {
+        return (option.Option::None, 0);
+    }
+    let (schema, bad) = read_schema(heap, src, tape, names, schema_at, 0);
+    if !refusal_ok(bad) {
+        drop_schema(heap, schema);
+        return (option.Option::None, bad);
+    }
+    return (option.Option::Some(schema), 0);
+}
+
+// Read one response of an operation's `responses` object. The key is the
+// status (three digits, or `default`).
+fn read_response[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte], key: int, value: int) -> [heap] (Response, int) {
+    var status = 0 - 1;
+    if json.string_equals(src, tape, key, "default") {
+        status = 0;
+    } else if json.string_plain(tape, key) {
+        let text = json.string_view(src, tape, key);
+        status = status_of(text);
+        if status < 0 {
+            return (Response { status: 0, body: option.Option::None }, code_of(Refusal::ResponseBadStatus));
+        }
+    } else {
+        return (Response { status: 0, body: option.Option::None }, code_of(Refusal::ResponseBadStatus));
+    }
+    let (body, bad) = read_body(heap, src, tape, names, value);
+    if !refusal_ok(bad) {
+        return (Response { status: status, body: body }, bad);
+    }
+    return (Response { status: status, body: body }, 0);
+}
+
+// Three digits, or -1. `default` is handled by the caller.
+fn status_of[&t](text: &t [byte]) -> [] int {
+    if len(text) != 3 {
+        return 0 - 1;
+    }
+    var n = 0;
+    var i = 0;
+    while i < 3 {
+        let c = int_of(text[i]);
+        if c < 48 || c > 57 {
+            return 0 - 1;
+        }
+        n = n * 10 + (c - 48);
+        i = i + 1;
+    }
+    return n;
+}
+
+// `own` then `inherited`: the document order the client's reader meets.
+fn append_parameters[&h](heap: &!h Heap, own: list.List[Parameter], inherited: list.List[Parameter]) -> [heap] list.List[Parameter] {
+    match own {
+        list.List::Empty => {
+            return inherited;
+        }
+        list.List::Cons(one, rest) => {
+            let tail = unbox(heap, rest);
+            let rev = reverse_parameters(heap, tail);
+            let base = prepend_all(heap, rev, inherited);
+            return list.push(heap, base, one);
+        }
+    }
+}
+
+fn reverse_parameters[&h](heap: &!h Heap, ps: list.List[Parameter]) -> [heap] list.List[Parameter] {
+    return reverse_parameters_into(heap, ps, list.List::Empty);
+}
+
+fn reverse_parameters_into[&h](heap: &!h Heap, left: list.List[Parameter], acc: list.List[Parameter]) -> [heap] list.List[Parameter] {
+    match left {
+        list.List::Empty => {
+            return acc;
+        }
+        list.List::Cons(one, rest) => {
+            let tail = unbox(heap, rest);
+            return reverse_parameters_into(heap, tail, list.push(heap, acc, one));
+        }
+    }
+}
+
+fn prepend_all[&h](heap: &!h Heap, front_first: list.List[Parameter], onto: list.List[Parameter]) -> [heap] list.List[Parameter] {
+    match front_first {
+        list.List::Empty => {
+            return onto;
+        }
+        list.List::Cons(one, rest) => {
+            let tail = unbox(heap, rest);
+            let base = prepend_all(heap, tail, onto);
+            return list.push(heap, base, one);
+        }
+    }
+}
+
+// Read one operation of a path item. `path` is the item's path, borrowed
+// here and copied into the operation.
+pub fn reverse_responses[&h](heap: &!h Heap, rs: list.List[Response]) -> [heap] list.List[Response] {
+    return reverse_responses_into(heap, rs, list.List::Empty);
+}
+
+fn reverse_responses_into[&h](heap: &!h Heap, left: list.List[Response], acc: list.List[Response]) -> [heap] list.List[Response] {
+    match left {
+        list.List::Empty => {
+            return acc;
+        }
+        list.List::Cons(one, rest) => {
+            let tail = unbox(heap, rest);
+            return reverse_responses_into(heap, tail, list.push(heap, acc, one));
+        }
+    }
+}
+
+fn read_operation[&h, &s, &t, &p, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], i: int, path: &p [byte], method: Method, item_params: int, names: &n [byte]) -> [heap] (Operation, int) {
+    let id_at = json.get(src, tape, i, "operationId");
+    if id_at < 0 || !json.is_string(tape, id_at) {
+        return (Operation { id: buffer.empty(heap, 1), method: method, path: buffer.empty(heap, 1), parameters: list.List::Empty, body: option.Option::None, body_optional: false, responses: list.List::Empty }, code_of(Refusal::OperationIdMissing));
+    }
+    let responses_at = json.get(src, tape, i, "responses");
+    if responses_at < 0 || !json.is_object(tape, responses_at) {
+        return (Operation { id: buffer.empty(heap, 1), method: method, path: buffer.empty(heap, 1), parameters: list.List::Empty, body: option.Option::None, body_optional: false, responses: list.List::Empty }, code_of(Refusal::OperationNoResponses));
+    }
+    // Parameters: the operation's own, then the path item's (the item's apply
+    // to every operation under it; the document's `/users/{id}` has `id` there).
+    let params_at = json.get(src, tape, i, "parameters");
+    let (own, bad_params) = read_parameters_or_none(heap, src, tape, names, params_at);
+    if !refusal_ok(bad_params) {
+        return (Operation { id: buffer.empty(heap, 1), method: method, path: buffer.empty(heap, 1), parameters: own, body: option.Option::None, body_optional: false, responses: list.List::Empty }, bad_params);
+    }
+    let (inherited, bad_inherited) = read_parameters_or_none(heap, src, tape, names, item_params);
+    if !refusal_ok(bad_inherited) {
+        drop_parameters(heap, own);
+        return (Operation { id: buffer.empty(heap, 1), method: method, path: buffer.empty(heap, 1), parameters: inherited, body: option.Option::None, body_optional: false, responses: list.List::Empty }, bad_inherited);
+    }
+    let parameters = append_parameters(heap, own, inherited);
+    // The request body.
+    let body_at = json.get(src, tape, i, "requestBody");
+    let (body, body_optional, bad_body) = read_request_body(heap, src, tape, names, body_at);
+    if !refusal_ok(bad_body) {
+        return (Operation { id: buffer.empty(heap, 1), method: method, path: buffer.empty(heap, 1), parameters: parameters, body: body, body_optional: body_optional, responses: list.List::Empty }, bad_body);
+    }
+    // The responses.
+    var responses = list.List::Empty;
+    var bad_responses = 0;
+    var j = responses_at + 1;
+    var left = json.count(tape, responses_at);
+    while left > 0 {
+        let (one, bad) = read_response(heap, src, tape, names, j, j + 1);
+        if !refusal_ok(bad) {
+            drop_response(heap, one);
+            bad_responses = bad;
+            left = 0;
+        } else {
+            responses = list.push(heap, responses, one);
+            j = json.skip(tape, j + 1);
+            left = left - 1;
+        }
+    }
+    if !refusal_ok(bad_responses) {
+        return (Operation { id: buffer.empty(heap, 1), method: method, path: buffer.empty(heap, 1), parameters: parameters, body: body, body_optional: body_optional, responses: responses }, bad_responses);
+    }
+    let id = text_of(heap, src, tape, id_at);
+    var path_text = buffer.empty(heap, 32);
+    path_text = buffer.append(heap, path_text, path);
+    // The lists were built front-first; the model keeps document order.
+    let parameters_ordered = reverse_parameters(heap, parameters);
+    let responses_ordered = reverse_responses(heap, responses);
+    return (Operation { id: id, method: method, path: path_text, parameters: parameters_ordered, body: body, body_optional: body_optional, responses: responses_ordered }, 0);
+}
+
+// `parameters` absent, or read; the absent case is an empty list, no refusal.
+fn read_parameters_or_none[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte], at: int) -> [heap] (list.List[Parameter], int) {
+    if at < 0 || !json.is_array(tape, at) {
+        return (list.List::Empty, 0);
+    }
+    return read_parameters(heap, src, tape, names, at);
+}
+
+// The request body, absent or present; `optional` says whether it may be
+// left out (`required` false, or absent -- OpenAPI's default).
+fn read_request_body[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte], at: int) -> [heap] (option.Option[Schema], bool, int) {
+    if at < 0 || !json.is_object(tape, at) {
+        return (option.Option::None, false, 0);
+    }
+    let content = json.get(src, tape, at, "content");
+    if content < 0 || !json.is_object(tape, content) {
+        return (option.Option::None, true, 0);
+    }
+    let json_media = json.get(src, tape, content, "application/json");
+    if json_media < 0 || !json.is_object(tape, json_media) {
+        return (option.Option::None, true, 0);
+    }
+    let schema_at = json.get(src, tape, json_media, "schema");
+    if schema_at < 0 || !json.is_object(tape, schema_at) {
+        return (option.Option::None, true, 0);
+    }
+    let (schema, bad) = read_schema(heap, src, tape, names, schema_at, 0);
+    if !refusal_ok(bad) {
+        drop_schema(heap, schema);
+        return (option.Option::None, false, bad);
+    }
+    var optional = true;
+    let req_at = json.get(src, tape, at, "required");
+    if req_at >= 0 && json.is_bool(tape, req_at) {
+        optional = !json.to_bool(tape, req_at);
+    }
+    return (option.Option::Some(schema), optional, 0);
+}
+
+// The lists were built front-first; the model keeps document order.
+fn reverse_operations[&h](heap: &!h Heap, front_first: list.List[Operation]) -> [heap] list.List[Operation] {
+    return reverse_operations_into(heap, front_first, list.List::Empty);
+}
+
+fn reverse_operations_into[&h](heap: &!h Heap, left: list.List[Operation], acc: list.List[Operation]) -> [heap] list.List[Operation] {
+    match left {
+        list.List::Empty => {
+            return acc;
+        }
+        list.List::Cons(one, rest) => {
+            let tail = unbox(heap, rest);
+            return reverse_operations_into(heap, tail, list.push(heap, acc, one));
+        }
+    }
+}
+
+fn reverse_components[&h](heap: &!h Heap, front_first: list.List[Component]) -> [heap] list.List[Component] {
+    return reverse_components_into(heap, front_first, list.List::Empty);
+}
+
+fn reverse_components_into[&h](heap: &!h Heap, left: list.List[Component], acc: list.List[Component]) -> [heap] list.List[Component] {
+    match left {
+        list.List::Empty => {
+            return acc;
+        }
+        list.List::Cons(one, rest) => {
+            let tail = unbox(heap, rest);
+            return reverse_components_into(heap, tail, list.push(heap, acc, one));
+        }
+    }
+}
+
+// Build the model of a parsed document. `read` (issue #3) checks the shape;
+// this reads the operations and the components.
+//
+// The document order is kept by walking forward and pushing to the front of
+// a list, then reversing once at the end -- `list.push` is O(1) at the head,
+// and the client's reader meets the document in order, so the model is in
+// order too.
+// The operations of `paths`, in document order.
+fn build_operations[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte]) -> [heap] (list.List[Operation], int) {
+    var operations = list.List::Empty;
+    let paths = json.get(src, tape, 0, "paths");
+    var j = paths + 1;
+    var left = json.count(tape, paths);
+    while left > 0 {
+        // `j` is the path name, `j + 1` the item.
+        let path = json.string_view(src, tape, j);
+        // The path item's own `parameters` apply to every operation under it.
+        let item_params = json.get(src, tape, j + 1, "parameters");
+        var k = j + 2;
+        var pairs = json.count(tape, j + 1);
+        while pairs > 0 {
+            let m = method_of(src, tape, k);
+            match m {
+                option.Option::Some(method) => {
+                    let (op, bad) = read_operation(heap, src, tape, k + 1, path, method, item_params, names);
+                    if !refusal_ok(bad) {
+                        drop_operation(heap, op);
+                        return (operations, bad);
+                    }
+                    operations = list.push(heap, operations, op);
+                }
+                option.Option::None => {
+                }
+            }
+            k = json.skip(tape, k + 1);
+            pairs = pairs - 1;
+        }
+        j = json.skip(tape, j + 1);
+        left = left - 1;
+    }
+    return (reverse_operations(heap, operations), 0);
+}
+
+// The components of `components.schemas`, in document order.
+fn build_components[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte]) -> [heap] (list.List[Component], int) {
+    var components = list.List::Empty;
+    let comps = json.get(src, tape, 0, "components");
+    if comps >= 0 && json.is_object(tape, comps) {
+        let schemas = json.get(src, tape, comps, "schemas");
+        if schemas >= 0 && json.is_object(tape, schemas) {
+            var k = schemas + 1;
+            var pairs = json.count(tape, schemas);
+            while pairs > 0 {
+                let (schema, bad) = read_schema(heap, src, tape, names, k + 1, 0);
+                if !refusal_ok(bad) {
+                    drop_schema(heap, schema);
+                    return (components, bad);
+                }
+                let name = text_of(heap, src, tape, k);
+                components = list.push(heap, components, Component { name: name, schema: schema });
+                k = json.skip(tape, k + 1);
+                pairs = pairs - 1;
+            }
+        }
+    }
+    return (reverse_components(heap, components), 0);
+}
+
+// Take the new, end the old: the `res`-safe assignment.
+fn swap_operations[&h](heap: &!h Heap, old: list.List[Operation], new: list.List[Operation]) -> [heap] list.List[Operation] {
+    drop_operations(heap, old);
+    return new;
+}
+
+fn swap_components[&h](heap: &!h Heap, old: list.List[Component], new: list.List[Component]) -> [heap] list.List[Component] {
+    drop_components(heap, old);
+    return new;
+}
+
+// The two walks, against the borrowed names. The refusal is an int code, so
+// the borrow ends before the branches and `names` is dropped on one path.
+fn build_with[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], names: buffer.Buffer) -> [heap] (Doc, int) {
+    var bad = 0;
+    var ops_ok = list.List::Empty;
+    var comps_ok = list.List::Empty;
+    borrow names as &nm in {
+        let nm_bytes = buffer.bytes(nm);
+        let (operations, bad_ops) = build_operations(heap, src, tape, nm_bytes);
+        let (components, bad_comps) = build_components(heap, src, tape, nm_bytes);
+        if bad_ops != 0 {
+            drop_components(heap, components);
+            drop_operations(heap, operations);
+            bad = bad_ops;
+        } else if bad_comps != 0 {
+            drop_components(heap, components);
+            drop_operations(heap, operations);
+            bad = bad_comps;
+        } else {
+            ops_ok = swap_operations(heap, ops_ok, operations);
+            comps_ok = swap_components(heap, comps_ok, components);
+        }
+    }
+    buffer.drop(heap, names);
+    if bad != 0 {
+        drop_operations(heap, ops_ok);
+        drop_components(heap, comps_ok);
+        return (Doc { operations: list.List::Empty, components: list.List::Empty }, bad);
+    }
+    return (Doc { operations: ops_ok, components: comps_ok }, 0);
+}
+
+pub fn build[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int]) -> [heap] (Doc, int) {
+    let names = schema_names(heap, src, tape);
+    return build_with(heap, src, tape, names);
+}
+
+// ---------------------------------------------------------------------
+// Ending the model
+// ---------------------------------------------------------------------
+
+// Free a schema tree.
+pub fn drop_schema[&h](heap: &!h Heap, s: Schema) -> [heap] int {
+    match s {
+        Schema::Ref(name) => {
+            buffer.drop(heap, name);
+            return 1;
+        }
+        Schema::Array(inner) => {
+            let items = unbox(heap, inner);
+            return 1 + drop_schema(heap, items);
+        }
+        Schema::Boolean => {
+            return 0;
+        }
+        Schema::Integer => {
+            return 0;
+        }
+        Schema::Number => {
+            return 0;
+        }
+        Schema::String => {
+            return 0;
+        }
+        Schema::Object => {
+            return 0;
+        }
+    }
+}
+
+pub fn drop_parameters[&h](heap: &!h Heap, ps: list.List[Parameter]) -> [heap] int {
+    match ps {
+        list.List::Empty => {
+            return 0;
+        }
+        list.List::Cons(one, rest) => {
+            drop_parameter(heap, one);
+            let tail = unbox(heap, rest);
+            return 1 + drop_parameters(heap, tail);
+        }
+    }
+}
+
+pub fn drop_parameter[&h](heap: &!h Heap, p: Parameter) -> [heap] int {
+    let Parameter { name, place, required, schema } = p;
+    buffer.drop(heap, name);
+    return drop_schema(heap, schema);
+}
+
+pub fn drop_responses[&h](heap: &!h Heap, rs: list.List[Response]) -> [heap] int {
+    match rs {
+        list.List::Empty => {
+            return 0;
+        }
+        list.List::Cons(one, rest) => {
+            drop_response(heap, one);
+            let tail = unbox(heap, rest);
+            return 1 + drop_responses(heap, tail);
+        }
+    }
+}
+
+pub fn drop_response[&h](heap: &!h Heap, r: Response) -> [heap] int {
+    let Response { status, body } = r;
+    match body {
+        option.Option::None => {
+            return 0;
+        }
+        option.Option::Some(schema) => {
+            return drop_schema(heap, schema);
+        }
+    }
+}
+
+pub fn drop_body[&h](heap: &!h Heap, b: option.Option[Schema]) -> [heap] int {
+    match b {
+        option.Option::None => {
+            return 0;
+        }
+        option.Option::Some(schema) => {
+            return drop_schema(heap, schema);
+        }
+    }
+}
+
+pub fn drop_operation[&h](heap: &!h Heap, o: Operation) -> [heap] int {
+    let Operation { id, method, path, parameters, body, body_optional, responses } = o;
+    buffer.drop(heap, id);
+    buffer.drop(heap, path);
+    var freed = drop_parameters(heap, parameters);
+    freed = freed + drop_body(heap, body);
+    freed = freed + drop_responses(heap, responses);
+    return freed;
+}
+
+pub fn drop_operations[&h](heap: &!h Heap, os: list.List[Operation]) -> [heap] int {
+    match os {
+        list.List::Empty => {
+            return 0;
+        }
+        list.List::Cons(one, rest) => {
+            let tail = unbox(heap, rest);
+            return 1 + drop_operations(heap, tail) + drop_operation(heap, one);
+        }
+    }
+}
+
+pub fn drop_components[&h](heap: &!h Heap, cs: list.List[Component]) -> [heap] int {
+    match cs {
+        list.List::Empty => {
+            return 0;
+        }
+        list.List::Cons(one, rest) => {
+            let Component { name, schema } = one;
+            buffer.drop(heap, name);
+            let tail = unbox(heap, rest);
+            return 1 + drop_schema(heap, schema) + drop_components(heap, tail);
+        }
+    }
+}
+
+pub fn drop_doc[&h](heap: &!h Heap, d: Doc) -> [heap] int {
+    let Doc { operations, components } = d;
+    var freed = drop_operations(heap, operations);
+    freed = freed + drop_components(heap, components);
+    return freed;
+}

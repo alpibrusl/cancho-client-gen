@@ -22,15 +22,28 @@ client is written from the document by this tool, and neither side hand-writes t
 
 ## Status
 
-**Slice 1 built: the reader.** [`src/clientgen.cho`](src/clientgen.cho) reads the document with `std.json`'s
-tape -- no copy, no foreign code -- and refuses what is not an OpenAPI 3.1 document: nine refusals, each saying
-what a client needs and where it is missing, and nothing written for an invalid one (pgen's discipline).
-`clientgen <doc> --check` answers whether a client can come from the document, and counts what it found: the
-byte-verified `examples/users/openapi.json` reads as `ok 3 paths, 5 operations, 2 components`. The work is
-sequenced in [the epic (#2)](https://github.com/alpibrusl/cancho-client-gen/issues/2); slices 2–7 (#4–#9) are
-not started. Sequenced after [cancho-web#16](https://github.com/alpibrusl/cancho-web/issues/16): components
-used below the schema root must be written as `$ref`, not inline -- named shapes mean a class per component
-instead of an anonymous one, and a client generator is the consumer that wants them.
+**Slices 1 and 2 built: the reader and the model.** [`src/clientgen.cho`](src/clientgen.cho) reads the document
+with `std.json`'s tape -- no copy, no foreign code -- and refuses what is not an OpenAPI 3.1 document (nine
+shape refusals, nothing written for an invalid one, pgen's discipline). [`src/model.cho`](src/model.cho)
+models what it reads, in the enum-and-struct discipline of [cancho-web#27](https://github.com/alpibrusl/cancho-web/issues/27):
+a `Method` and a `Where` enum, a `Schema` enum with `Ref` holding the component's *name*, a res struct per
+thing (`Operation`, `Parameter`, `Response`, `Component`, `Doc`), all `res` so the checker holds the tool to
+freeing the model. `$ref`s resolve to names -- a reference that points nowhere is a named error, not a
+best-effort inline -- and a response that is a `$ref` to a named response component (`422` in the users
+document) resolves to its `problem+json` schema. `clientgen <doc> --model` prints it:
+
+```
+get /users -> listUsers (2 parameters, body none, 2 responses: 200=Page 422=Problem )
+post /users -> createUser (0 parameters, body NewUser, 5 responses: 201=User 400=Problem 415=Problem 422=Problem 503=Problem )
+component NewUser: object
+```
+
+The byte-verified `examples/users/openapi.json` reads as `ok 5 operations, 4 components`. The work is sequenced
+in [the epic (#2)](https://github.com/alpibrusl/cancho-client-gen/issues/2); the writers (#5, #7, #8), the
+committed-output half of the gate (#6) and the cancho client (#9) are not started. Sequenced after
+[cancho-web#16](https://github.com/alpibrusl/cancho-web/issues/16): components used below the schema root must
+be written as `$ref`, not inline -- named shapes mean a class per component instead of an anonymous one, and
+a client generator is the consumer that wants them.
 
 ## What you get
 
@@ -58,14 +71,18 @@ instead of an anonymous one, and a client generator is the consumer that wants t
 
 ## Quick start
 
-The reader is built; the writers are slices 4–6 ([#5](https://github.com/alpibrusl/cancho-client-gen/issues/5),
+The reader and the model are built; the writers are slices 4–6 ([#5](https://github.com/alpibrusl/cancho-client-gen/issues/5),
 [#7](https://github.com/alpibrusl/cancho-client-gen/issues/7), [#8](https://github.com/alpibrusl/cancho-client-gen/issues/8)).
-What runs today is the gate's first half -- the answer to "is this the document a client can come from":
+What runs today is the gate's first half -- the answer to "is this the document a client can come from" --
+and the model, printed:
 
 ```
 scripts/build.sh build/clientgen
 build/clientgen examples/users/openapi.json --check
-ok 3 paths, 5 operations, 2 components
+ok 5 operations, 4 components
+build/clientgen examples/users/openapi.json --model
+get /users -> listUsers (2 parameters, body none, 2 responses: 200=Page 422=Problem )
+...
 ```
 
 The planned shape, once the TypeScript target lands (the gate's committed-output half is
@@ -79,9 +96,10 @@ git diff --exit-code clients/ts
 ## Repository layout
 
 ```
-src/clientgen.cho         the reader: `std.json`'s tape, the document's shape, the refusals; --check
+src/clientgen.cho         the reader and the tool: `std.json`'s tape, the shape checks; --check, --model
+src/model.cho             the model: Method, Where, Schema (with $ref resolved to a name), Operation, ...; res all the way down
 examples/users/openapi.json  cancho-web's byte-verified document, the first test input
-tests/e2e.py              the end-to-end tests: the document read, every refusal exercised
+tests/e2e.py              the end-to-end tests: the document read and modelled, every refusal exercised
 scripts/build.sh          build against the pinned compiler
 docs/authority.json       what the tool can touch, as last approved; CI fails when it changes
 docs/index.html           the project page
