@@ -1,17 +1,18 @@
 {
   "bounded": true,
   "unbounded_by": [],
-  "effects": ["args", "err_write", "fs_read", "heap", "io_write"],
+  "effects": ["args", "err_write", "fs_read", "fs_write", "heap", "io_write"],
   "labels": [
     { "name": "args", "argument": null, "bounded": true },
     { "name": "err_write", "argument": null, "bounded": true },
     { "name": "fs_read", "argument": "", "bounded": true },
+    { "name": "fs_write", "argument": "", "bounded": true },
     { "name": "heap", "argument": null, "bounded": true },
     { "name": "io_write", "argument": null, "bounded": true }
   ],
   "foreign_symbols": [],
-  "pure": ["bytes", "check_shape", "code_of", "count", "decode", "equal", "err_control", "err_depth", "err_end", "err_escape", "err_full", "err_number", "err_syntax", "err_trailing", "err_utf8", "error_code", "error_message", "error_position", "escape_width", "find", "get", "hex4", "hex_value", "in_range", "is_array", "is_bool", "is_digit", "is_digit", "is_object", "is_string", "is_tail", "is_ws", "kind", "lead_bits", "length$Component", "length$Operation", "length$Parameter", "length$Response", "max_depth", "method_name", "method_of", "most_bytes", "named", "next_point", "ref_prefix_len", "refusal_name", "refusal_of", "refusal_ok", "second_range", "skip", "starts_with", "status_of", "string_equals", "string_plain", "string_view", "tape_len", "to_bool", "version_31", "width_of"],
+  "pure": ["bytes", "check_shape", "code_of", "count", "decode", "equal", "err_control", "err_depth", "err_end", "err_escape", "err_full", "err_number", "err_syntax", "err_trailing", "err_utf8", "error_code", "error_message", "error_position", "escape_width", "find", "get", "hex4", "hex_value", "in_range", "is_array", "is_bool", "is_digit", "is_digit", "is_object", "is_some$Schema", "is_string", "is_tail", "is_ws", "kind", "lead_bits", "length$Component", "length$Operation", "length$Parameter", "length$Response", "max_depth", "method_name", "method_of", "most_bytes", "named", "next_point", "ref_prefix_len", "refusal_name", "refusal_of", "refusal_ok", "second_range", "skip", "starts_with", "status_of", "string_equals", "string_plain", "string_view", "tape_len", "to_bool", "version_31", "width_of"],
   "folded_operators": 13,
   "folded_calls": 0,
-  "functions": 125
+  "functions": 148
 }

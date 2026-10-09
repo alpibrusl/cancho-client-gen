@@ -191,6 +191,14 @@ pub fn where_name(w: Where) -> [] &static [byte] {
 // that go with it; anything else is `Refusal::SchemaUnknownKind` at build
 // time, because a client of strict types has nothing to write for a shape
 // it cannot name.
+// One property of an object schema: its name, its schema, whether it is
+// required. (OpenAPI lists `required` by name; the pair travels together.)
+pub res struct Field {
+    name: buffer.Buffer,
+    schema: Schema,
+    required: bool,
+}
+
 pub enum Schema {
     // A resolved `$ref`: the component's name, owned.
     Ref(buffer.Buffer),
@@ -199,7 +207,10 @@ pub enum Schema {
     Number,
     String,
     Array(Box[Schema]),
-    Object,
+    // An object: its fields, in document order, each carrying its own
+    // required flag. A strict client writes an interface from them.
+    // `Box`: a field's schema may be the object that holds it.
+    Object(Box[list.List[Field]]),
 }
 
 // A parameter: its name, where it lives, whether it must be there, and the
@@ -479,12 +490,92 @@ fn ref_prefix_len() -> [] int {
 
 // Read one schema node into the model. `depth` bounds the recursion: a
 // document nested deeper than any real one is refused, not crashed.
+// Free a field list.
+pub fn drop_fields[&h](heap: &!h Heap, fs: list.List[Field]) -> [heap] int {
+    match fs {
+        list.List::Empty => {
+            return 0;
+        }
+        list.List::Cons(one, rest) => {
+            let Field { name, schema, required } = one;
+            buffer.drop(heap, name);
+            let tail = unbox(heap, rest);
+            return 1 + drop_schema(heap, schema) + drop_fields(heap, tail);
+        }
+    }
+}
+
+// The fields were pushed front-first; the model keeps document order.
+fn reverse_fields[&h](heap: &!h Heap, fs: list.List[Field]) -> [heap] list.List[Field] {
+    return reverse_fields_into(heap, fs, list.List::Empty);
+}
+
+fn reverse_fields_into[&h](heap: &!h Heap, left: list.List[Field], acc: list.List[Field]) -> [heap] list.List[Field] {
+    match left {
+        list.List::Empty => {
+            return acc;
+        }
+        list.List::Cons(one, rest) => {
+            let tail = unbox(heap, rest);
+            return reverse_fields_into(heap, tail, list.push(heap, acc, one));
+        }
+    }
+}
+
+// An object schema: `properties` walked in document order, each field
+// marked by whether `required` names it.
+fn read_object[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte], i: int) -> [heap] (Schema, int) {
+    var fields = list.List::Empty;
+    let props = json.get(src, tape, i, "properties");
+    if props >= 0 && json.is_object(tape, props) {
+        // The required names, newline-separated: a field checks itself
+        // against them as it is read, the same way a `$ref` does.
+        var required = buffer.empty(heap, 64);
+        let req_at = json.get(src, tape, i, "required");
+        if req_at >= 0 && json.is_array(tape, req_at) {
+            var r = req_at + 1;
+            var rleft = json.count(tape, req_at);
+            while rleft > 0 {
+                required = buffer.append(heap, required, json.string_view(src, tape, r));
+                required = buffer.push(heap, required, byte_of(10));
+                r = json.skip(tape, r);
+                rleft = rleft - 1;
+            }
+        }
+        var k = props + 1;
+        var left = json.count(tape, props);
+        while left > 0 {
+            let (schema, bad) = read_schema(heap, src, tape, names, k + 1, 0);
+            if !refusal_ok(bad) {
+                drop_schema(heap, schema);
+                drop_fields(heap, fields);
+                buffer.drop(heap, required);
+                return (empty_object(heap), bad);
+            }
+            let name = text_of(heap, src, tape, k);
+            borrow required as &rq in {
+                let is_required = named(buffer.bytes(rq), json.string_view(src, tape, k));
+                fields = list.push(heap, fields, Field { name: name, schema: schema, required: is_required });
+            }
+            k = json.skip(tape, k + 1);
+            left = left - 1;
+        }
+        buffer.drop(heap, required);
+    }
+    return (Schema::Object(box(heap, reverse_fields(heap, fields))), 0);
+}
+
+// The placeholder for a refused read: an object with nothing in it.
+fn empty_object[&h](heap: &!h Heap) -> [heap] Schema {
+    return Schema::Object(box(heap, list.List::Empty));
+}
+
 pub fn read_schema[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte], i: int, depth: int) -> [heap] (Schema, int) {
     if depth > 32 {
-        return (Schema::Object, code_of(Refusal::SchemaUnknownKind));
+        return (empty_object(heap), code_of(Refusal::SchemaUnknownKind));
     }
     if !json.is_object(tape, i) {
-        return (Schema::Object, code_of(Refusal::SchemaUnknownKind));
+        return (empty_object(heap), code_of(Refusal::SchemaUnknownKind));
     }
     // A `$ref` is the one key that makes a schema named.
     let r = json.get(src, tape, i, "$ref");
@@ -492,11 +583,11 @@ pub fn read_schema[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int
         let text = json.string_view(src, tape, r);
         let prefix: &static [byte] = "#/components/schemas/";
         if !bytes.starts_with(text, prefix) {
-            return (Schema::Object, code_of(Refusal::RefNotSchemas));
+            return (empty_object(heap), code_of(Refusal::RefNotSchemas));
         }
         let cut = ref_prefix_len();
         if !named(names, text[cut..len(text)]) {
-            return (Schema::Object, code_of(Refusal::RefNowhere));
+            return (empty_object(heap), code_of(Refusal::RefNowhere));
         }
         var out = buffer.empty(heap, 32);
         out = buffer.append(heap, out, text[cut..len(text)]);
@@ -505,7 +596,7 @@ pub fn read_schema[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int
     // No `$ref`: the kind the model names, or a refusal.
     let t = json.get(src, tape, i, "type");
     if t < 0 || !json.is_string(tape, t) {
-        return (Schema::Object, code_of(Refusal::SchemaUnknownKind));
+        return (empty_object(heap), code_of(Refusal::SchemaUnknownKind));
     }
     if json.string_equals(src, tape, t, "boolean") {
         return (Schema::Boolean, 0);
@@ -520,21 +611,21 @@ pub fn read_schema[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int
         return (Schema::String, 0);
     }
     if json.string_equals(src, tape, t, "object") {
-        return (Schema::Object, 0);
+        return read_object(heap, src, tape, names, i);
     }
     if json.string_equals(src, tape, t, "array") {
         let items = json.get(src, tape, i, "items");
         if items < 0 {
-            return (Schema::Object, code_of(Refusal::SchemaUnknownKind));
+            return (empty_object(heap), code_of(Refusal::SchemaUnknownKind));
         }
         let (inner, bad) = read_schema(heap, src, tape, names, items, depth + 1);
         if !refusal_ok(bad) {
             drop_schema(heap, inner);
-            return (Schema::Object, bad);
+            return (empty_object(heap), bad);
         }
         return (Schema::Array(box(heap, inner)), 0);
     }
-    return (Schema::Object, code_of(Refusal::SchemaUnknownKind));
+    return (empty_object(heap), code_of(Refusal::SchemaUnknownKind));
 }
 
 // Read one parameter of an operation.
@@ -543,7 +634,7 @@ fn read_parameter[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int]
     let in_at = json.get(src, tape, i, "in");
     let schema_at = json.get(src, tape, i, "schema");
     if name_at < 0 || !json.is_string(tape, name_at) {
-        return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: Schema::Object }, code_of(Refusal::ParameterNoSchema));
+        return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: empty_object(heap) }, code_of(Refusal::ParameterNoSchema));
     }
     var w = Where::InQuery;
     if in_at >= 0 && json.is_string(tape, in_at) {
@@ -554,10 +645,10 @@ fn read_parameter[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int]
         } else if json.string_equals(src, tape, in_at, "header") {
             w = Where::InHeader;
         } else {
-            return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: Schema::Object }, code_of(Refusal::ParameterBadIn));
+            return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: empty_object(heap) }, code_of(Refusal::ParameterBadIn));
         }
     } else {
-        return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: Schema::Object }, code_of(Refusal::ParameterBadIn));
+        return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: empty_object(heap) }, code_of(Refusal::ParameterBadIn));
     }
     var req = false;
     let req_at = json.get(src, tape, i, "required");
@@ -565,16 +656,16 @@ fn read_parameter[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int]
         if json.is_bool(tape, req_at) {
             req = json.to_bool(tape, req_at);
         } else {
-            return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: Schema::Object }, code_of(Refusal::ParameterBadRequired));
+            return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: empty_object(heap) }, code_of(Refusal::ParameterBadRequired));
         }
     }
     if schema_at < 0 || !json.is_object(tape, schema_at) {
-        return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: Schema::Object }, code_of(Refusal::ParameterNoSchema));
+        return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: empty_object(heap) }, code_of(Refusal::ParameterNoSchema));
     }
     let (schema, bad) = read_schema(heap, src, tape, names, schema_at, 0);
     if !refusal_ok(bad) {
         drop_schema(heap, schema);
-        return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: Schema::Object }, bad);
+        return (Parameter { name: buffer.empty(heap, 1), place: Where::InQuery, required: false, schema: empty_object(heap) }, bad);
     }
     let name = text_of(heap, src, tape, name_at);
     return (Parameter { name: name, place: w, required: req, schema: schema }, 0);
@@ -1029,8 +1120,9 @@ pub fn drop_schema[&h](heap: &!h Heap, s: Schema) -> [heap] int {
         Schema::String => {
             return 0;
         }
-        Schema::Object => {
-            return 0;
+        Schema::Object(held) => {
+            let fields = unbox(heap, held);
+            return drop_fields(heap, fields);
         }
     }
 }

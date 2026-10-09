@@ -105,7 +105,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: .5rem 1.6rem; }
 
 <div class="hero" id="top">
   <div>
-    <a class="badge" href="#status"><i></i>Slice 1 of 7 built &middot; the reader; the writers are not started</a>
+    <a class="badge" href="#status"><i></i>Slices 1 to 3 of 7 built &middot; the reader, the model, the TypeScript target; Go and Python are not started</a>
     <h1>The contract, both ways.</h1>
     <p class="lead">cancho-client-gen consumes the byte-verified OpenAPI 3.1 document that <a href="https://github.com/alpibrusl/cancho-web">cancho-web</a> generates and writes strictly typed client libraries, in the pgen tradition: <strong>cancho-pg turns <code>queries.sql</code> into typed cancho functions by asking the database; this turns <code>openapi.json</code> into typed clients by reading the document.</strong></p>
     <div class="cta"><a class="btn primary" href="https://github.com/alpibrusl/cancho-client-gen/issues/2">The epic</a><a class="btn ghost" href="https://github.com/alpibrusl/cancho-client-gen#readme">The README</a></div>
@@ -140,15 +140,15 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: .5rem 1.6rem; }
 
 <section id="slices">
   <h2>Slices.</h2>
-  <p class="sub">The work is sequenced in <a href="https://github.com/alpibrusl/cancho-client-gen/issues/2">the epic (#2)</a> and its seven task issues: a JSON reader over cancho's own buffers that refuses an invalid document (<strong>#3, built</strong>); the model of paths, operations, parameters, bodies, responses and <code>$ref</code>-resolved components (<strong>#4, built</strong>); the TypeScript target (#5); the committed-output gate (#6); the Go target (#7); the Python target (#8); and the first consumer that is cancho itself, a cancho client over <code>http.client</code> (#9).</p>
+  <p class="sub">The work is sequenced in <a href="https://github.com/alpibrusl/cancho-client-gen/issues/2">the epic (#2)</a> and its seven task issues: a JSON reader over cancho's own buffers that refuses an invalid document (<strong>#3, built</strong>); the model of paths, operations, parameters, bodies, responses and <code>$ref</code>-resolved components (<strong>#4, built</strong>); the TypeScript target (<strong>#5, built</strong>); the committed-output gate (#6); the Go target (#7); the Python target (#8); and the first consumer that is cancho itself, a cancho client over <code>http.client</code> (#9).</p>
 </section>
 
 <aside class="status" id="status">
-  <h2>Slice 1 built: the reader</h2>
+  <h2>Slices 1 to 3 built: the reader, the model, the TypeScript target</h2>
   <p class="note" style="margin:.2rem 0 .6rem">The reader is built and held by CI; the model, the three writers and the gate are not started. The epic and its tasks carry the full descriptions.</p>
   <ul>
-    <li><strong>Built:</strong> <code>src/clientgen.cho</code> reads the document over <code>std.json</code>&rsquo;s tape and refuses what is not an OpenAPI 3.1 document -- nine refusals, nothing written for an invalid one (<a href="https://github.com/alpibrusl/cancho-client-gen/issues/3">#3</a>). The byte-verified <code>examples/users/openapi.json</code> reads as <code>ok 3 paths, 5 operations, 2 components</code>.</li>
-    <li><strong>Not started:</strong> the model (#4), the TypeScript, Go and Python targets (#5, #7, #8), the cancho client (#9), and the committed-output half of the gate (#6).</li>
+    <li><strong>Built:</strong> <code>src/clientgen.cho</code> reads the document over <code>std.json</code>&rsquo;s tape and refuses what is not an OpenAPI 3.1 document -- nine refusals, nothing written for an invalid one (<a href="https://github.com/alpibrusl/cancho-client-gen/issues/3">#3</a>). The byte-verified <code>examples/users/openapi.json</code> reads as <code>ok 5 operations, 4 components</code>.</li>
+    <li><strong>Not started:</strong> the Go and Python targets (#7, #8), the cancho client (#9), and the committed-output half of the gate (#6).</li>
     <li><strong>Sequenced after <a href="https://github.com/alpibrusl/cancho-web/issues/16">cancho-web#16</a>:</strong> components below the schema root written as <code>$ref</code>, not inline -- named shapes mean a class per component instead of anonymous ones.</li>
   </ul>
   <p style="margin:.8rem 0 0"><a href="https://github.com/alpibrusl/cancho-client-gen/issues/2">The epic</a> &middot; <a href="https://github.com/alpibrusl/cancho-web">cancho-web</a> &middot; <a href="https://github.com/alpibrusl/cancho-pg">cancho-pg</a> &middot; <a href="https://github.com/alpibrusl/cancho">cancho</a></p>

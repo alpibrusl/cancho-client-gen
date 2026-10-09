@@ -172,10 +172,11 @@ class Reader(unittest.TestCase):
         self.assertEqual(out, "ok 1 operations, 0 components\n")
 
     def test_no_check_writes_nothing(self):
-        """Without a writer, plain mode refuses rather than pretending to generate."""
+        """Without a target, plain mode refuses rather than pretending to generate."""
         out, err, st = run(USERS)
         self.assertEqual(st, 1)
-        self.assertIn("the model is built, the writers are not", err)
+        self.assertIn("the TypeScript writer is built", err)
+        self.assertIn("the Go and Python writers are not", err)
         self.assertEqual(out, "")
 
     def test_missing_file(self):
@@ -192,7 +193,37 @@ class Reader(unittest.TestCase):
     def test_usage(self):
         out, err, st = run()
         self.assertEqual(st, 2)
-        self.assertEqual(err, "usage: clientgen <openapi.json> [--check | --model]\n")
+        self.assertEqual(err, "usage: clientgen <openapi.json> [--check | --model | --typescript -o <file>]\n")
+
+    def test_typescript_client(self):
+        """The generated client is the committed one, byte for byte (the gate's shape)."""
+        out_path = os.path.join(ROOT, "build", "client.ts")
+        out, err, st = run(USERS, "--typescript", "-o", out_path)
+        self.assertEqual(st, 0)
+        self.assertEqual(out, "")
+        self.assertEqual(err, "")
+        with open(out_path, "rb") as f:
+            with open(os.path.join(ROOT, "examples", "users", "ts", "client.ts"), "rb") as g:
+                self.assertEqual(f.read(), g.read(), "examples/users/ts/client.ts is stale: regenerate it")
+
+    def test_typescript_deterministic(self):
+        """Same document, same bytes: two runs agree."""
+        one = os.path.join(ROOT, "build", "one.ts")
+        two = os.path.join(ROOT, "build", "two.ts")
+        run(USERS, "--typescript", "-o", one)
+        run(USERS, "--typescript", "-o", two)
+        with open(one, "rb") as f, open(two, "rb") as g:
+            self.assertEqual(f.read(), g.read())
+
+    def test_typescript_strict(self):
+        """The generated client compiles under `tsc --strict` (the issue's bar)."""
+        out_path = os.path.join(ROOT, "examples", "users", "ts", "client.ts")
+        if not os.path.exists(out_path):
+            self.skipTest("committed client not present")
+        tsc = subprocess.run(["npx", "-y", "-p", "typescript", "tsc", "--strict", "--noEmit",
+                             "--target", "es2022", "--lib", "es2022,dom", out_path],
+                             capture_output=True, text=True, timeout=300)
+        self.assertEqual(tsc.returncode, 0, tsc.stdout + tsc.stderr)
 
     def test_users_document_is_the_pinned_one(self):
         """The test input is the byte-verified document cancho-web's e2e pins."""

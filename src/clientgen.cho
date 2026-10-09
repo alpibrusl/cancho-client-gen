@@ -8,6 +8,7 @@ import std.list;
 import std.option;
 
 import model;
+import ts;
 
 // `clientgen` -- strictly typed clients from the byte-verified OpenAPI document.
 //
@@ -137,7 +138,7 @@ fn schema_word[&h, &s](heap: &!h Heap, out: buffer.Buffer, s: &s model.Schema) -
         model.Schema::String => {
             line = buffer.append(heap, line, "string");
         }
-        model.Schema::Object => {
+        model.Schema::Object(_) => {
             line = buffer.append(heap, line, "object");
         }
         model.Schema::Array(inner) => {
@@ -276,16 +277,28 @@ fn print_components[&h, &i](heap: &!h Heap, io: &!i Io, comps: list.List[model.C
 
 // `clientgen <openapi.json> [--check | --model]` -- read the document, build
 // its model, or refuse it.
-fn run[&h, &g, &i, &z](heap: &!h Heap, args: &g Args, io: &!i Io, fs: &z Fs("")) -> [heap, args, io_write, err_write, fs_read("")] int {
+fn run[&h, &g, &i, &z](heap: &!h Heap, args: &g Args, io: &!i Io, fs: &z Fs("")) -> [heap, args, io_write, err_write, fs_read(""), fs_write("")] int {
     let path = arg(args, 1);
     var checking = false;
     var modelling = false;
-    if arg_count(args) > 2 {
-        if bytes.equal(arg(args, 2), "--check") {
+    var typescript = false;
+    var out_path = arg(args, 1);
+    var n = arg_count(args);
+    var a = 2;
+    while a < n {
+        if bytes.equal(arg(args, a), "--check") {
             checking = true;
-        } else if bytes.equal(arg(args, 2), "--model") {
+        } else if bytes.equal(arg(args, a), "--model") {
             modelling = true;
+        } else if bytes.equal(arg(args, a), "--typescript") {
+            typescript = true;
+        } else if bytes.equal(arg(args, a), "-o") {
+            if a + 1 < n {
+                out_path = arg(args, a + 1);
+                a = a + 1;
+            }
         }
+        a = a + 1;
     }
     let source = box_slice(heap, most_bytes() + 1, byte_of(0));
     var got = 0 - 1;
@@ -351,10 +364,19 @@ fn run[&h, &g, &i, &z](heap: &!h Heap, args: &g Args, io: &!i Io, fs: &z Fs(""))
                             } else if modelling {
                                 print_model(heap, io, doc);
                                 status = 0;
+                            } else if typescript {
+                                // The TypeScript target (#5): one deterministic
+                                // file. The writer consumes the model.
+                                let text = ts.write(heap, doc);
+                                borrow text as &tx in {
+                                    let wrote = fs_write(fs, out_path, buffer.bytes(tx));
+                                }
+                                buffer.drop(heap, text);
+                                status = 0;
                             } else {
                                 model.drop_doc(heap, doc);
-                                // The writers are slices 4-6 (#5, #7, #8).
-                                complain(io, path, "the model is built, the writers are not: --check or --model answers what this document says (issues #5, #7, #8)");
+                                // The Go and Python targets are #7 and #8.
+                                complain(io, path, "the TypeScript writer is built (--typescript -o <file>); the Go and Python writers are not (issues #7, #8)");
                             }
                         }
                     }
@@ -376,8 +398,8 @@ fn main(world: World) -> [] int {
     borrow mut io as &!ie in {
         borrow fs as &z in {
             borrow args as &g in {
-                if arg_count(g) < 2 || arg_count(g) > 3 {
-                    io.error_all(ie, "usage: clientgen <openapi.json> [--check | --model]\n");
+                if arg_count(g) < 2 || arg_count(g) > 5 {
+                    io.error_all(ie, "usage: clientgen <openapi.json> [--check | --model | --typescript -o <file>]\n");
                     status = 2;
                 } else {
                     borrow mut heap as &!h in {
