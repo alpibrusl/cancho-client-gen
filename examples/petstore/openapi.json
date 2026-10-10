@@ -1,0 +1,99 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Petstore", "version": "1.0.0" },
+  "servers": [{ "url": "https://api.example.org/v1", "description": "production" }],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/pets": {
+      "get": {
+        "operationId": "listPets",
+        "summary": "List pets",
+        "security": [],
+        "parameters": [
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100 } },
+          { "name": "X-Request-Id", "in": "header", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "a page of pets", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PetPage" } } } },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "operationId": "createPet",
+        "summary": "Create a pet",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NewPet" } } } },
+        "responses": {
+          "201": { "description": "the pet", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/pets/{petId}": {
+      "parameters": [
+        { "name": "petId", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 } }
+      ],
+      "get": {
+        "operationId": "showPetById",
+        "summary": "Info for a specific pet",
+        "responses": {
+          "200": { "description": "the pet", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "operationId": "replacePet",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NewPet" } } } },
+        "responses": {
+          "200": { "description": "the pet", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer" }
+    },
+    "responses": {
+      "Error": { "description": "an error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+    },
+    "schemas": {
+      "Pet": {
+        "allOf": [
+          { "$ref": "#/components/schemas/NewPet" },
+          { "type": "object", "properties": { "id": { "type": "integer", "minimum": 1 } }, "required": ["id"] }
+        ]
+      },
+      "NewPet": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "enum": ["cat", "dog", "bird"] },
+          "tags": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["name"]
+      },
+      "PetPage": {
+        "type": "object",
+        "properties": {
+          "total": { "type": "integer", "minimum": 0 },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Pet" } }
+        },
+        "required": ["total", "items"]
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "integer" },
+          "message": { "type": "string" },
+          "details": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "array", "items": { "type": "string" } }
+            ]
+          }
+        },
+        "required": ["code", "message"]
+      }
+    }
+  }
+}

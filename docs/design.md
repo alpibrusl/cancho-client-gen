@@ -177,9 +177,17 @@ residual is a whole list the checker cannot see is empty.
 
 ## 10. Open questions
 
-1. **Second producer.** "Any OpenAPI 3.1 producer" is tested against one producer's document. A
-   second document (a hand-written one exercising shapes the users API does not — unions, `allOf`,
-   cookies) would either hold the claim or name its limit. Fold into #8's test inputs.
+1. **Second producer — answered (2026-10-10).** [`examples/petstore/openapi.json`](../examples/petstore/openapi.json)
+   is a hand-written petstore exercising what the users API does not: `allOf`, `oneOf`, document and
+   operation `security` (bearer), a header parameter, a `default` response, `servers`, enums. What it
+   found, verified shape by shape: `allOf`/`oneOf` are **refused** (`SchemaUnknownKind` — the right
+   discipline, the missing capability, #11); `security` is **silently ignored** — a secured operation
+   generates with no token argument, a client that compiles and cannot work (#10, the correctness gap);
+   header parameters are **silently dropped** by every writer (#12); `servers` are ignored (the caller
+   sets the base — acceptable, undocumented); and `default` responses **work** (status 0, `$ref`
+   resolved) — a capability this tool had and had not claimed. The reduced petstore (no `allOf`/`oneOf`)
+   passes all four writers' strict checks, and found a cancho-writer bug the users document could not:
+   `drop_*` over-declares `heap` for a component with no owned field (#13). The issues carry the work.
 2. **cancho-web#16.** Until components below the schema root are written as `$ref`, inline shapes
    are written structurally by every writer. When it lands, the writers gain named types for them
    and this section shrinks.
