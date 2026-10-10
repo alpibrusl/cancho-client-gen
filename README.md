@@ -22,7 +22,7 @@ client is written from the document by this tool, and neither side hand-writes t
 
 ## Status
 
-**Slices 1 to 5 built: the reader, the model, the TypeScript target, the gate, the Go target.** [`src/clientgen.cho`](src/clientgen.cho) reads the document
+**Slices 1 to 6 built: the reader, the model, three targets, the gate.** [`src/clientgen.cho`](src/clientgen.cho) reads the document
 with `std.json`'s tape -- no copy, no foreign code -- and refuses what is not an OpenAPI 3.1 document (nine
 shape refusals, nothing written for an invalid one, pgen's discipline). [`src/model.cho`](src/model.cho)
 models what it reads, in the enum-and-struct discipline of [cancho-web#27](https://github.com/alpibrusl/cancho-web/issues/27):
@@ -49,9 +49,14 @@ break), and [`tests/client_e2e.mjs`](tests/client_e2e.mjs) runs the committed cl
 cancho-web users service -- one happy path and one `problem+json` refusal, typed both ways. The Go target ([#7](https://github.com/alpibrusl/cancho-client-gen/issues/7)) is built:
 [`examples/users/go/client.go`](examples/users/go/client.go) -- a `type` per component, a function per
 operation over `net/http` (`getUser(c *Client, id int) (User, error)`), `problem+json` as `*ProblemError`
-implementing `error` -- compiles under `go build` and `go vet`, held by the same gate. The work is sequenced
-in [the epic (#2)](https://github.com/alpibrusl/cancho-client-gen/issues/2); the Python target (#8) and
-the cancho client (#9) are not started. Sequenced after
+implementing `error` -- compiles under `go build` and `go vet`, held by the same gate. The Python target
+([#8](https://github.com/alpibrusl/cancho-client-gen/issues/8)) is built:
+[`examples/users/py/client.py`](examples/users/py/client.py) -- a frozen `@dataclass` per component, a
+typed method per operation over `urllib.request` (no third-party package), `problem+json` as
+`ProblemError` -- passes `mypy --strict` and runs against the live service in
+[`tests/client_e2e.py`](tests/client_e2e.py). The design is [`docs/design.md`](docs/design.md). The work
+is sequenced in [the epic (#2)](https://github.com/alpibrusl/cancho-client-gen/issues/2); the cancho
+client (#9) is not started. Sequenced after
 [cancho-web#16](https://github.com/alpibrusl/cancho-web/issues/16): components used below the schema root must
 be written as `$ref`, not inline -- named shapes mean a class per component instead of an anonymous one, and
 a client generator is the consumer that wants them.
@@ -82,8 +87,8 @@ a client generator is the consumer that wants them.
 
 ## Quick start
 
-The reader, the model, the TypeScript and Go targets and the gate are built; the Python target is
-[#8](https://github.com/alpibrusl/cancho-client-gen/issues/8). What runs today:
+The reader, the model, the TypeScript, Go and Python targets and the gate are built; the cancho
+client is [#9](https://github.com/alpibrusl/cancho-client-gen/issues/9). What runs today:
 
 ```
 scripts/build.sh build/clientgen
@@ -131,11 +136,15 @@ src/clientgen.cho         the reader and the tool: `std.json`'s tape, the shape 
 src/model.cho             the model: Method, Where, Schema (with $ref resolved to a name), Operation, ...; res all the way down
 src/ts.cho                the TypeScript writer: an interface per component, a function per operation, ProblemError
 src/gow.cho               the Go writer: a type per component, a function per operation, ProblemError implementing error
+src/py.cho                the Python writer: a frozen dataclass per component, a typed method per operation, ProblemError
 examples/users/openapi.json  cancho-web's byte-verified document, the first test input
 examples/users/ts/client.ts  the generated TypeScript client, committed; the gate holds it against the document
 examples/users/go/client.go  the generated Go client, committed; go build and go vet in CI
+examples/users/py/client.py  the generated Python client, committed; mypy --strict and a live run in CI
+docs/design.md           the design the slices were built against
 tests/e2e.py              the end-to-end tests: the document read and modelled, every refusal, tsc --strict
-tests/client_e2e.mjs      the committed client against the running users service (happy path, problem+json)
+tests/client_e2e.mjs      the committed TypeScript client against the running users service
+tests/client_e2e.py       the committed Python client against the running users service
 scripts/check-client.sh   the gate: regenerate, git diff --exit-code
 scripts/build.sh          build against the pinned compiler
 docs/authority.json       what the tool can touch, as last approved; CI fails when it changes

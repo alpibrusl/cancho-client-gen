@@ -175,8 +175,8 @@ class Reader(unittest.TestCase):
         """Without a target, plain mode refuses rather than pretending to generate."""
         out, err, st = run(USERS)
         self.assertEqual(st, 1)
-        self.assertIn("the TypeScript and Go writers are built", err)
-        self.assertIn("the Python writer is not", err)
+        self.assertIn("the TypeScript, Go and Python writers are built", err)
+        self.assertIn("the cancho client is not", err)
         self.assertEqual(out, "")
 
     def test_missing_file(self):
@@ -193,7 +193,7 @@ class Reader(unittest.TestCase):
     def test_usage(self):
         out, err, st = run()
         self.assertEqual(st, 2)
-        self.assertEqual(err, "usage: clientgen <openapi.json> [--check | --model | --typescript -o <file> | --go -o <file>]\n")
+        self.assertEqual(err, "usage: clientgen <openapi.json> [--check | --model | --typescript | --go | --python, -o <file>]\n")
 
     def test_typescript_client(self):
         """The generated client is the committed one, byte for byte (the gate's shape)."""
@@ -225,6 +225,25 @@ class Reader(unittest.TestCase):
         for check in ([go, "build", "./..."], [go, "vet", "./..."]):
             p = subprocess.run(check, cwd=godir, capture_output=True, text=True, timeout=300)
             self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+
+    def test_python_client(self):
+        """The generated Python client is the committed one, byte for byte."""
+        out_path = os.path.join(ROOT, "build", "client.py")
+        out, err, st = run(USERS, "--python", "-o", out_path)
+        self.assertEqual(st, 0)
+        self.assertEqual(err, "")
+        with open(out_path, "rb") as f:
+            with open(os.path.join(ROOT, "examples", "users", "py", "client.py"), "rb") as g:
+                self.assertEqual(f.read(), g.read(), "examples/users/py/client.py is stale: regenerate it")
+
+    def test_python_mypy(self):
+        """The committed Python client passes mypy --strict (the issue's bar)."""
+        path = os.path.join(ROOT, "examples", "users", "py", "client.py")
+        if not os.path.exists(path):
+            self.skipTest("committed Python client not present")
+        p = subprocess.run([sys.executable, "-m", "mypy", "--strict", path],
+                           capture_output=True, text=True, timeout=300)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
     def test_typescript_deterministic(self):
         """Same document, same bytes: two runs agree."""
