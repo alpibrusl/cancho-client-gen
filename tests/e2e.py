@@ -175,8 +175,7 @@ class Reader(unittest.TestCase):
         """Without a target, plain mode refuses rather than pretending to generate."""
         out, err, st = run(USERS)
         self.assertEqual(st, 1)
-        self.assertIn("the TypeScript, Go and Python writers are built", err)
-        self.assertIn("the cancho client is not", err)
+        self.assertIn("the TypeScript, Go, Python and cancho writers are built", err)
         self.assertEqual(out, "")
 
     def test_missing_file(self):
@@ -193,7 +192,7 @@ class Reader(unittest.TestCase):
     def test_usage(self):
         out, err, st = run()
         self.assertEqual(st, 2)
-        self.assertEqual(err, "usage: clientgen <openapi.json> [--check | --model | --typescript | --go | --python, -o <file>]\n")
+        self.assertEqual(err, "usage: clientgen <openapi.json> [--check | --model | --typescript | --go | --python | --cancho, -o <file>]\n")
 
     def test_typescript_client(self):
         """The generated client is the committed one, byte for byte (the gate's shape)."""
@@ -244,6 +243,36 @@ class Reader(unittest.TestCase):
         p = subprocess.run([sys.executable, "-m", "mypy", "--strict", path],
                            capture_output=True, text=True, timeout=300)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+
+    def test_cancho_client(self):
+        """The generated cancho client is the committed one, byte for byte."""
+        out_path = os.path.join(ROOT, "build", "client.cho")
+        out, err, st = run(USERS, "--cancho", "-o", out_path)
+        self.assertEqual(st, 0)
+        self.assertEqual(err, "")
+        # The committed cancho client is `cancho fmt`-canonical (the gate fmts
+        # before diffing); so is the fresh generation.
+        cancho = os.environ.get("CANCHO", "cancho")
+        subprocess.run([cancho, "fmt", out_path], capture_output=True, timeout=300)
+        with open(out_path, "rb") as f:
+            with open(os.path.join(ROOT, "examples", "users", "cho", "client.cho"), "rb") as g:
+                self.assertEqual(f.read(), g.read(), "examples/users/cho/client.cho is stale: regenerate it")
+
+    def test_cancho_check(self):
+        """The committed cancho client type-checks and is fmt-canonical."""
+        path = os.path.join(ROOT, "examples", "users", "cho", "client.cho")
+        if not os.path.exists(path):
+            self.skipTest("committed cancho client not present")
+        cancho = os.environ.get("CANCHO", "cancho")
+        p = subprocess.run([cancho, "check", path, "--std", "--backend", "cranelift"],
+                           capture_output=True, text=True, timeout=300)
+        # A module (no `main`) type-checks: the one notice is "no `main`
+        # function" and nothing else (any other `error:` is a refusal).
+        combined = (p.stdout + p.stderr).strip()
+        self.assertTrue(combined.endswith("error: no `main` function"), combined)
+        f = subprocess.run([cancho, "fmt", "--check", path],
+                           capture_output=True, text=True, timeout=300)
+        self.assertEqual(f.returncode, 0, f.stdout + f.stderr)
 
     def test_typescript_deterministic(self):
         """Same document, same bytes: two runs agree."""

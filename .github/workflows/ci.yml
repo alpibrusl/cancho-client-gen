@@ -28,9 +28,9 @@ jobs:
       - name: Build clientgen
         run: |
           export CANCHO=$GITHUB_WORKSPACE/cancho/target/release/cancho
-          $CANCHO check cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho --std --backend cranelift
+          $CANCHO check cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho cancho-client-gen/src/cancho.cho --std --backend cranelift
           $CANCHO fmt --check cancho-client-gen/src/
-          $CANCHO build --std --backend cranelift cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho -o cancho-client-gen/build/clientgen
+          $CANCHO build --std --backend cranelift cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho cancho-client-gen/src/cancho.cho -o cancho-client-gen/build/clientgen
       - name: The reader and the model, over the byte-verified document
         run: python3 tests/e2e.py
         working-directory: cancho-client-gen
@@ -77,7 +77,7 @@ jobs:
       - name: Build clientgen
         run: |
           export CANCHO=$GITHUB_WORKSPACE/cancho/target/release/cancho
-          $CANCHO build --std --backend cranelift cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho -o cancho-client-gen/build/clientgen
+          $CANCHO build --std --backend cranelift cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho cancho-client-gen/src/cancho.cho -o cancho-client-gen/build/clientgen
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27"
@@ -93,6 +93,13 @@ jobs:
           go build ./...
           go vet ./...
         working-directory: cancho-client-gen
+      - name: The committed cancho client checks and is fmt-canonical
+        run: |
+          $CANCHO check examples/users/cho/client.cho --std --backend cranelift || [ "$?" = "100" ]
+          $CANCHO fmt --check examples/users/cho/client.cho
+        working-directory: cancho-client-gen
+        env:
+          CANCHO: ${{ github.workspace }}/cancho/target/release/cancho
       - name: The committed Python client passes mypy --strict
         run: |
           pip install mypy

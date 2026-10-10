@@ -1,7 +1,8 @@
 # cancho-client-gen: strictly typed clients from the byte-verified document
 
-> **Status: slices 1–6 built (#3–#8, 2026-10-10), one remaining (#9)**: the reader, the model, the
-> TypeScript, Go and Python targets, and the gate. The cancho client (#9) is not started. This document is the design those slices were built against, written after the fact for the
+> **Status: all seven slices built (#3–#9, 2026-10-10)**: the reader, the model, the TypeScript, Go
+> and Python targets, the gate, and the cancho client. The epic (#2) is complete; the open questions
+> are in §10. This document is the design those slices were built against, written after the fact for the
 > first five and before the fact for the last two — the cancho tradition is design before code, and the
 > first five slices carried their design in the epic (#2) and its issues instead; this file makes it
 > checked-in.
@@ -154,7 +155,7 @@ and mypy needs the query dict's pairs annotated (`cast('list[tuple[str, Any]]', 
 optional values are `T | None` and inference alone cannot name the tuple. The document's own `Problem`
 wins here too: when it names one, the generated file uses it and only `ProblemError` is the tool's.
 
-## 9. The cancho client (#9), decided here
+## 9. The cancho client (#9), built as decided
 
 The first consumer that is cancho itself: the same model, a fourth writer, but the output is
 cancho — `struct` per component, a `fn` per operation over `packages/http-client` (cancho's own
@@ -163,6 +164,16 @@ to PostgreSQL), `problem+json` a res struct the caller matches on. This is the s
 loop named in §2: a cancho service's document generating a cancho client, the whole contract in one
 language, authority report on the generated client included. It waits on nothing external; it is
 sequenced last because it is the one consumer whose *runtime* is cancho's to provide.
+
+Built (2026-10-10): `examples/users/cho/client.cho`, from the same document, held by the same gate.
+The module is the typed contract -- `res struct` per component, a strict `decode_*` (wrong kinds left
+at their defaults), a `build_*` per operation, `problem+json` the document's own `Problem` -- and the
+loop is the caller's, as §2 said and `web`'s is. What building it found: matching an owned schema
+consumes it, so the writer's one walk per component emits every text at once (the struct, the drop
+with its destructure, the decode with its locals and return) -- the discipline the other three
+writers could defer because their languages' types are text, while cancho's are checked; and the
+generated drops are recursive where lists appear, as `std.list`'s own `drop` is, because a loop's
+residual is a whole list the checker cannot see is empty.
 
 ## 10. Open questions
 

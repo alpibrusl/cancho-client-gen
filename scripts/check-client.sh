@@ -38,6 +38,13 @@ trap 'rm -rf "$tmp"' EXIT
 "$BIN" "$DOC" --typescript -o "$tmp/client.ts"
 "$BIN" "$DOC" --go -o "$tmp/client.go"
 "$BIN" "$DOC" --python -o "$tmp/client.py"
+"$BIN" "$DOC" --cancho -o "$tmp/client.cho"
+# The generated cancho is canonicalised by `cancho fmt` before the diff: the
+# generator writes it the way `pgen` does, and the committed file is what fmt
+# makes of it (the issue's own words: "formatted by `cancho fmt`").
+if [ -n "${CANCHO:-}" ] && [ -x "${CANCHO:-}" ]; then
+  "$CANCHO" fmt "$tmp/client.cho" >/dev/null
+fi
 
 fail=0
 if ! diff -u "$here/examples/users/ts/client.ts" "$tmp/client.ts"; then
@@ -55,5 +62,10 @@ if ! diff -u "$here/examples/users/py/client.py" "$tmp/client.py"; then
   echo "  $BIN $DOC --python -o examples/users/py/client.py" >&2
   fail=1
 fi
+if ! diff -u "$here/examples/users/cho/client.cho" "$tmp/client.cho"; then
+  echo "check-client: examples/users/cho/client.cho is stale: regenerate it with" >&2
+  echo "  $BIN $DOC --cancho -o examples/users/cho/client.cho" >&2
+  fail=1
+fi
 if [ "$fail" != 0 ]; then exit 1; fi
-echo "check-client: all three clients match the document"
+echo "check-client: all four clients match the document"

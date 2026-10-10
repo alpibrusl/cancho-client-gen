@@ -11,6 +11,7 @@ import model;
 import ts;
 import gow;
 import py;
+import cc;
 
 // `clientgen` -- strictly typed clients from the byte-verified OpenAPI document.
 //
@@ -286,6 +287,7 @@ fn run[&h, &g, &i, &z](heap: &!h Heap, args: &g Args, io: &!i Io, fs: &z Fs(""))
     var typescript = false;
     var golang = false;
     var python = false;
+    var cho = false;
     var out_path = arg(args, 1);
     var n = arg_count(args);
     var a = 2;
@@ -300,6 +302,8 @@ fn run[&h, &g, &i, &z](heap: &!h Heap, args: &g Args, io: &!i Io, fs: &z Fs(""))
             golang = true;
         } else if bytes.equal(arg(args, a), "--python") {
             python = true;
+        } else if bytes.equal(arg(args, a), "--cancho") {
+            cho = true;
         } else if bytes.equal(arg(args, a), "-o") {
             if a + 1 < n {
                 out_path = arg(args, a + 1);
@@ -397,10 +401,18 @@ fn run[&h, &g, &i, &z](heap: &!h Heap, args: &g Args, io: &!i Io, fs: &z Fs(""))
                                 }
                                 buffer.drop(heap, text);
                                 status = 0;
+                            } else if cho {
+                                // The cancho target (#9): the contract in one
+                                // language. The writer consumes the model.
+                                let text = cc.write(heap, doc);
+                                borrow text as &cx in {
+                                    let wrote = fs_write(fs, out_path, buffer.bytes(cx));
+                                }
+                                buffer.drop(heap, text);
+                                status = 0;
                             } else {
                                 model.drop_doc(heap, doc);
-                                // The cancho client is #9.
-                                complain(io, path, "the TypeScript, Go and Python writers are built (--typescript | --go | --python, -o <file>); the cancho client is not (issue #9)");
+                                complain(io, path, "the TypeScript, Go, Python and cancho writers are built (--typescript | --go | --python | --cancho, -o <file>)");
                             }
                         }
                     }
@@ -423,7 +435,7 @@ fn main(world: World) -> [] int {
         borrow fs as &z in {
             borrow args as &g in {
                 if arg_count(g) < 2 || arg_count(g) > 5 {
-                    io.error_all(ie, "usage: clientgen <openapi.json> [--check | --model | --typescript | --go | --python, -o <file>]\n");
+                    io.error_all(ie, "usage: clientgen <openapi.json> [--check | --model | --typescript | --go | --python | --cancho, -o <file>]\n");
                     status = 2;
                 } else {
                     borrow mut heap as &!h in {

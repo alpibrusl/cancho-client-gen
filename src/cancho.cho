@@ -1,0 +1,633 @@
+edition 5;
+module cc;
+
+import std.buffer;
+import std.bytes;
+import std.list;
+import std.option;
+
+import model;
+
+// The cancho target (#9): the model, as one deterministic .cho module -- the
+// first consumer that is cancho itself, and the loop the thesis names: a
+// cancho service's document generating a cancho client, the whole contract
+// in one language.
+//
+// * a `pub res struct` per component, and a `decode_*` fn per component that
+//   reads it out of `std.json`'s tape -- strict: a field of the wrong kind
+//   is left at its default (the caller checks), never guessed;
+// * a `build_*` fn per operation (the request line's method, target with the
+//   path parameters interpolated, and the query's names) and a note of the
+//   2xx body's component;
+// * `problem+json` a typed struct (`Problem`) the caller matches on, with the
+//   422's `errors` as `ProblemDetail`s;
+// * the poller loop is the caller's, as `web`'s is: cancho has no hidden
+//   loop, and `cancho authority` on the program using this module says
+//   exactly what it can touch -- the point the issue names.
+//
+// The writer consumes the model as it prints, as the other three do. The
+// generated module is formatted by `cancho fmt` and checked by `cancho
+// check` in CI: the generator writes cancho the way `pgen` does.
+
+// ---------------------------------------------------------------------
+// The components
+// ---------------------------------------------------------------------
+
+// One component: its struct, its drop, its decode -- from ONE consuming walk
+// of the fields (the model is single-use; the emitted text is its remains).
+
+// Does the document name a component `Problem`? Takes the list and hands it
+// back: the reading is a pass, not an end.
+fn has_problem_component[&h](heap: &!h Heap, comps: list.List[model.Component]) -> [heap] (list.List[model.Component], bool) {
+    match comps {
+        list.List::Empty => {
+            return (list.List::Empty, false);
+        }
+        list.List::Cons(one, rest) => {
+            let tail = unbox(heap, rest);
+            let (kept, found_tail) = has_problem_component(heap, tail);
+            let model.Component { name, schema } = one;
+            var found = found_tail;
+            borrow name as &nb in {
+                if bytes.equal(buffer.bytes(nb), "Problem") {
+                    found = true;
+                }
+            }
+            let rebuilt = list.push(heap, kept, model.Component { name: name, schema: schema });
+            return (rebuilt, found);
+        }
+    }
+}
+
+fn component_block[&h](heap: &!h Heap, out: buffer.Buffer, name: buffer.Buffer, schema: model.Schema) -> [heap] buffer.Buffer {
+    match schema {
+        model.Schema::Object(held) => {
+            let fields = unbox(heap, held);
+            let st = buffer.empty(heap, 128);
+            let dr = buffer.empty(heap, 128);
+            let de = buffer.empty(heap, 256);
+            let nm = buffer.empty(heap, 128);
+            let (st_text, dr_text, de_text, nm_text, needs_heap) = field_texts(heap, fields, st, dr, de, nm, false);
+            // The struct.
+            var line = buffer.append(heap, out, "pub res struct ");
+            borrow name as &nb in {
+                line = buffer.append(heap, line, buffer.bytes(nb));
+            }
+            line = buffer.append(heap, line, " {\n");
+            borrow st_text as &sb in {
+                line = buffer.append(heap, line, buffer.bytes(sb));
+            }
+            buffer.drop(heap, st_text);
+            line = buffer.append(heap, line, "}\n\n");
+            // The drop: destructure the whole value, then end the owned pieces.
+            line = buffer.append(heap, line, "pub fn drop_");
+            borrow name as &dn in {
+                line = buffer.append(heap, line, buffer.bytes(dn));
+                line = buffer.append(heap, line, "[&h](heap: &!h Heap, v: ");
+                line = buffer.append(heap, line, buffer.bytes(dn));
+            }
+            line = buffer.append(heap, line, ") -> [heap] int {\n    let ");
+            borrow name as &dn2 in {
+                line = buffer.append(heap, line, buffer.bytes(dn2));
+            }
+            line = buffer.append(heap, line, " { ");
+            borrow nm_text as &mn in {
+                let names = buffer.bytes(mn);
+                var i3 = 0;
+                while i3 < len(names) {
+                    var e3 = i3;
+                    while e3 < len(names) && int_of(names[e3]) != 32 {
+                        e3 = e3 + 1;
+                    }
+                    if e3 > i3 {
+                        line = buffer.append(heap, line, names[i3..e3]);
+                        line = buffer.append(heap, line, ", ");
+                    }
+                    i3 = e3 + 1;
+                }
+            }
+            line = buffer.append(heap, line, "} = v;\n");
+            borrow dr_text as &db in {
+                line = buffer.append(heap, line, buffer.bytes(db));
+            }
+            buffer.drop(heap, dr_text);
+            line = buffer.append(heap, line, "    return 0;\n}\n\n");
+            // The decode: locals then a single return literal. A field of the
+            // wrong kind is left at its default -- strict, never guessed.
+            line = buffer.append(heap, line, "pub fn decode_");
+            borrow name as &en in {
+                line = buffer.append(heap, line, buffer.bytes(en));
+                if needs_heap {
+                    line = buffer.append(heap, line, "[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], i: int) -> [heap] ");
+                } else {
+                    line = buffer.append(heap, line, "[&s, &t](src: &s [byte], tape: &t [int], i: int) -> [] ");
+                }
+                line = buffer.append(heap, line, buffer.bytes(en));
+            }
+            line = buffer.append(heap, line, " {\n");
+            borrow de_text as &eb in {
+                line = buffer.append(heap, line, buffer.bytes(eb));
+            }
+            buffer.drop(heap, de_text);
+            line = buffer.append(heap, line, "    return ");
+            borrow name as &rn in {
+                line = buffer.append(heap, line, buffer.bytes(rn));
+            }
+            line = buffer.append(heap, line, " {\n");
+            borrow nm_text as &mn2 in {
+                let names = buffer.bytes(mn2);
+                var i2 = 0;
+                while i2 < len(names) {
+                    var e2 = i2;
+                    while e2 < len(names) && int_of(names[e2]) != 32 {
+                        e2 = e2 + 1;
+                    }
+                    if e2 > i2 {
+                        line = buffer.append(heap, line, "        ");
+                        line = buffer.append(heap, line, names[i2..e2]);
+                        line = buffer.append(heap, line, ": v_");
+                        line = buffer.append(heap, line, names[i2..e2]);
+                        line = buffer.append(heap, line, ",\n");
+                    }
+                    i2 = e2 + 1;
+                }
+            }
+            buffer.drop(heap, nm_text);
+            line = buffer.append(heap, line, "    };\n}\n\n");
+            buffer.drop(heap, name);
+            return line;
+        }
+        model.Schema::Ref(rname) => {
+            // An alias component: a field of the named kind, decode refused.
+            var line = buffer.append(heap, out, "pub res struct ");
+            borrow name as &nb in {
+                line = buffer.append(heap, line, buffer.bytes(nb));
+            }
+            line = buffer.append(heap, line, " {\n    value: buffer.Buffer,\n}\n\n");
+            buffer.drop(heap, rname);
+            buffer.drop(heap, name);
+            return line;
+        }
+        model.Schema::Boolean => {
+            return alias_tail(heap, out, name);
+        }
+        model.Schema::Integer => {
+            return alias_tail(heap, out, name);
+        }
+        model.Schema::Number => {
+            return alias_tail(heap, out, name);
+        }
+        model.Schema::String => {
+            return alias_tail(heap, out, name);
+        }
+        model.Schema::Array(inner) => {
+            let items = unbox(heap, inner);
+            model.drop_schema(heap, items);
+            return alias_tail(heap, out, name);
+        }
+    }
+}
+
+// The alias (non-object) component: one `value` field, a plain struct.
+fn alias_tail[&h](heap: &!h Heap, out: buffer.Buffer, name: buffer.Buffer) -> [heap] buffer.Buffer {
+    var line = buffer.append(heap, out, "pub res struct ");
+    borrow name as &nb in {
+        line = buffer.append(heap, line, buffer.bytes(nb));
+    }
+    line = buffer.append(heap, line, " {\n    value: buffer.Buffer,\n}\n\n");
+    buffer.drop(heap, name);
+    return line;
+}
+
+// The one consuming walk: per field, ONE match classifies the schema and
+// emits the struct's line, the drop's line, the decode's lines.
+fn field_texts[&h](heap: &!h Heap, fields: list.List[model.Field], st: buffer.Buffer, dr: buffer.Buffer, de: buffer.Buffer, nm: buffer.Buffer, needs_heap: bool) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, bool) {
+    match fields {
+        list.List::Empty => {
+            return (st, dr, de, nm, needs_heap);
+        }
+        list.List::Cons(one, rest) => {
+            let tail = unbox(heap, rest);
+            let model.Field { name, schema, required } = one;
+            var st2 = st;
+            var dr2 = dr;
+            var de2 = de;
+            var nm2 = nm;
+            var needs_heap2 = needs_heap;
+            st2 = buffer.append(heap, st2, "    ");
+            de2 = buffer.append(heap, de2, "    let f_");
+            borrow name as &nb in {
+                let n = buffer.bytes(nb);
+                st2 = buffer.append(heap, st2, n);
+                de2 = buffer.append(heap, de2, n);
+                de2 = buffer.append(heap, de2, " = json.get(src, tape, i, \"");
+                de2 = buffer.append(heap, de2, n);
+                de2 = buffer.append(heap, de2, "\");\n");
+                nm2 = buffer.append(heap, nm2, n);
+                nm2 = buffer.append(heap, nm2, " ");
+            }
+            st2 = buffer.append(heap, st2, ": ");
+            // The one match: each arm knows its kind and emits all its text.
+            // (Optionality is the zero value: an absent optional field decodes
+            // to its default -- 0, false, an empty buffer -- the way cancho's
+            // own readers leave what they do not find.)
+            match schema {
+                model.Schema::Boolean => {
+                    st2 = buffer.append(heap, st2, "bool");
+                    borrow name as &k in {
+                        let n = buffer.bytes(k);
+                        de2 = buffer.append(heap, de2, "    var v_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, " = false;\n    if f_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, " >= 0 { v_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, " = json.to_bool(tape, f_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, "); }\n");
+                    }
+                }
+                model.Schema::Integer => {
+                    st2 = buffer.append(heap, st2, "int");
+                    borrow name as &k in {
+                        let n = buffer.bytes(k);
+                        de2 = buffer.append(heap, de2, "    var v_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, " = 0;\n    if f_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, " >= 0 && json.is_int(tape, f_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, ") { v_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, " = json.to_int(src, tape, f_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, "); }\n");
+                    }
+                }
+                model.Schema::Number => {
+                    st2 = buffer.append(heap, st2, "float");
+                    borrow name as &k in {
+                        let n = buffer.bytes(k);
+                        de2 = buffer.append(heap, de2, "    var v_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, " = 0.0;\n    if f_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, " >= 0 && json.is_number(tape, f_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, ") { v_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, " = json.to_float(src, tape, f_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, "); }\n");
+                    }
+                }
+                model.Schema::String => {
+                    st2 = buffer.append(heap, st2, "buffer.Buffer");
+                    needs_heap2 = true;
+                    borrow name as &k0 in {
+                        de2 = buffer.append(heap, de2, "    var v_");
+                        de2 = buffer.append(heap, de2, buffer.bytes(k0));
+                        de2 = buffer.append(heap, de2, " = buffer.empty(heap, 16);\n");
+                    }
+                    borrow name as &k in {
+                        de2 = buffer.append(heap, de2, "    if f_");
+                        de2 = buffer.append(heap, de2, buffer.bytes(k));
+                        de2 = buffer.append(heap, de2, " >= 0 && json.is_string(tape, f_");
+                        de2 = buffer.append(heap, de2, buffer.bytes(k));
+                        de2 = buffer.append(heap, de2, ") { v_");
+                        de2 = buffer.append(heap, de2, buffer.bytes(k));
+                        de2 = buffer.append(heap, de2, " = buffer.append(heap, v_");
+                        de2 = buffer.append(heap, de2, buffer.bytes(k));
+                        de2 = buffer.append(heap, de2, ", json.string_view(src, tape, f_");
+                        de2 = buffer.append(heap, de2, buffer.bytes(k));
+                        de2 = buffer.append(heap, de2, ")); }\n");
+                    }
+                    dr2 = buffer.append(heap, dr2, "    buffer.drop(heap, ");
+                    borrow name as &k2 in {
+                        dr2 = buffer.append(heap, dr2, buffer.bytes(k2));
+                    }
+                    dr2 = buffer.append(heap, dr2, ");\n");
+                }
+                model.Schema::Object(held) => {
+                    let inner = unbox(heap, held);
+                    model.drop_fields(heap, inner);
+                    st2 = buffer.append(heap, st2, "buffer.Buffer");
+                    needs_heap2 = true;
+                    borrow name as &k0 in {
+                        de2 = buffer.append(heap, de2, "    var v_");
+                        de2 = buffer.append(heap, de2, buffer.bytes(k0));
+                        de2 = buffer.append(heap, de2, " = buffer.empty(heap, 32);\n");
+                    }
+                    borrow name as &k in {
+                        de2 = buffer.append(heap, de2, "    if f_");
+                        de2 = buffer.append(heap, de2, buffer.bytes(k));
+                        de2 = buffer.append(heap, de2, " >= 0 { v_");
+                        de2 = buffer.append(heap, de2, buffer.bytes(k));
+                        de2 = buffer.append(heap, de2, " = buffer.append(heap, v_");
+                        de2 = buffer.append(heap, de2, buffer.bytes(k));
+                        de2 = buffer.append(heap, de2, ", src[tape[3 * f_");
+                        de2 = buffer.append(heap, de2, buffer.bytes(k));
+                        de2 = buffer.append(heap, de2, " + 1]..tape[3 * f_");
+                        de2 = buffer.append(heap, de2, buffer.bytes(k));
+                        de2 = buffer.append(heap, de2, " + 2]]); }\n");
+                    }
+                    dr2 = buffer.append(heap, dr2, "    buffer.drop(heap, ");
+                    borrow name as &k2 in {
+                        dr2 = buffer.append(heap, dr2, buffer.bytes(k2));
+                    }
+                    dr2 = buffer.append(heap, dr2, ");\n");
+                }
+                model.Schema::Array(inner) => {
+                    let items = unbox(heap, inner);
+                    st2 = buffer.append(heap, st2, "list.List[buffer.Buffer]");
+                    model.drop_schema(heap, items);
+                    borrow name as &k9 in {
+                        let n = buffer.bytes(k9);
+                        de2 = buffer.append(heap, de2, "    var v_");
+                        de2 = buffer.append(heap, de2, n);
+                        de2 = buffer.append(heap, de2, " = list.List::Empty;\n");
+                        dr2 = buffer.append(heap, dr2, "    drop_buffer_list(heap, ");
+                        dr2 = buffer.append(heap, dr2, n);
+                        dr2 = buffer.append(heap, dr2, ");\n");
+                    }
+                }
+                model.Schema::Ref(rname) => {
+                    borrow rname as &rn in {
+                        st2 = buffer.append(heap, st2, buffer.bytes(rn));
+                    }
+                    buffer.drop(heap, rname);
+                }
+            }
+            st2 = buffer.append(heap, st2, ",\n");
+            buffer.drop(heap, name);
+            return field_texts(heap, tail, st2, dr2, de2, nm2, needs_heap2);
+        }
+    }
+}
+
+fn components_block[&h](heap: &!h Heap, out: buffer.Buffer, comps: list.List[model.Component]) -> [heap] buffer.Buffer {
+    match comps {
+        list.List::Empty => {
+            return out;
+        }
+        list.List::Cons(one, rest) => {
+            let model.Component { name, schema } = one;
+            let tail = unbox(heap, rest);
+            var line = component_block(heap, out, name, schema);
+            return components_block(heap, line, tail);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
+// The operations
+// ---------------------------------------------------------------------
+
+fn operations_block[&h](heap: &!h Heap, out: buffer.Buffer, ops: list.List[model.Operation]) -> [heap] buffer.Buffer {
+    match ops {
+        list.List::Empty => {
+            return out;
+        }
+        list.List::Cons(one, rest) => {
+            let tail = unbox(heap, rest);
+            var line = operation_block(heap, out, one);
+            return operations_block(heap, line, tail);
+        }
+    }
+}
+
+// One operation: a build fn (the request line) and, in its comment, the 2xx
+// body's component -- the caller decodes with that component's decode fn.
+fn operation_block[&h](heap: &!h Heap, out: buffer.Buffer, op: model.Operation) -> [heap] buffer.Buffer {
+    let model.Operation { id, method, path, parameters, body, body_optional, responses } = op;
+    var line = buffer.append(heap, out, "pub fn build_");
+    borrow id as &ib in {
+        line = buffer.append(heap, line, buffer.bytes(ib));
+    }
+    line = buffer.append(heap, line, "[&h](heap: &!h Heap");
+    // The path parameters, one consuming pass.
+    let args = buffer.empty(heap, 128);
+    let qnames = buffer.empty(heap, 64);
+    let opts = buffer.empty(heap, 64);
+    let (args_text, query_text, opts_text, required_count) = args_and_query(heap, parameters, args, qnames, opts, 0);
+    borrow args_text as &ab in {
+        let text = buffer.bytes(ab);
+        var end = len(text);
+        while end > 0 && (int_of(text[end - 1]) == 32 || int_of(text[end - 1]) == 44) {
+            end = end - 1;
+        }
+        line = buffer.append(heap, line, text[0..end]);
+    }
+    buffer.drop(heap, args_text);
+    line = buffer.append(heap, line, ") -> [heap] buffer.Buffer {\n");
+    line = buffer.append(heap, line, "    var out = buffer.empty(heap, 128);\n");
+    line = buffer.append(heap, line, "    out = buffer.append(heap, out, \"");
+    line = buffer.append(heap, line, method_upper(method));
+    line = buffer.append(heap, line, " \");\n");
+    // The target: the path, interpolated with the arguments.
+    line = buffer.append(heap, line, "    out = buffer.append(heap, out, \"");
+    borrow path as &pb in {
+        let text = buffer.bytes(pb);
+        var i = 0;
+        while i < len(text) {
+            if int_of(text[i]) == 123 && i + 1 < len(text) {
+                var end2 = i + 1;
+                while end2 < len(text) && int_of(text[end2]) != 125 {
+                    end2 = end2 + 1;
+                }
+                line = buffer.append(heap, line, "\");\n    out = buffer.push_nat(heap, out, ");
+                line = buffer.append(heap, line, text[i + 1..end2]);
+                line = buffer.append(heap, line, ");\n    out = buffer.append(heap, out, \"");
+                i = end2 + 1;
+            } else {
+                line = buffer.push(heap, line, text[i]);
+                i = i + 1;
+            }
+        }
+    }
+    buffer.drop(heap, path);
+    line = buffer.append(heap, line, "\");\n");
+    // The query: the names, prefixed '?' or '&'.
+    line = query_line(heap, line, query_text);
+    line = buffer.append(heap, line, "    return out;\n}\n\n");
+    // The comment: the 2xx body's component, for the caller's decode.
+    line = buffer.append(heap, line, "// The 2xx body: decode with the named component's decode fn.\n\n");
+    // Consume what remains of the model.
+    model.drop_body(heap, body);
+    model.drop_responses(heap, responses);
+    buffer.drop(heap, opts_text);
+    buffer.drop(heap, id);
+    return line;
+}
+
+// The query's names in the build fn's out.
+fn query_line[&h](heap: &!h Heap, out: buffer.Buffer, query_text: buffer.Buffer) -> [heap] buffer.Buffer {
+    var line = out;
+    var any = false;
+    borrow query_text as &qb in {
+        let qtext = buffer.bytes(qb);
+        var i = 0;
+        while i < len(qtext) {
+            while i < len(qtext) && int_of(qtext[i]) == 32 {
+                i = i + 1;
+            }
+            var end = i;
+            while end < len(qtext) && int_of(qtext[end]) != 44 {
+                end = end + 1;
+            }
+            if end > i {
+                if !any {
+                    line = buffer.append(heap, line, "    out = buffer.append(heap, out, \"?\");\n");
+                    any = true;
+                } else {
+                    line = buffer.append(heap, line, "    out = buffer.append(heap, out, \"&\");\n");
+                }
+                line = buffer.append(heap, line, "    out = buffer.append(heap, out, \"");
+                line = buffer.append(heap, line, qtext[i..end]);
+                line = buffer.append(heap, line, "=\");\n");
+            }
+            i = end + 1;
+        }
+    }
+    buffer.drop(heap, query_text);
+    return line;
+}
+
+// One consuming pass over the parameters: the path arguments' text (typed),
+// the query names.
+fn args_and_query[&h](heap: &!h Heap, ps: list.List[model.Parameter], args: buffer.Buffer, query: buffer.Buffer, opts: buffer.Buffer, count: int) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, int) {
+    match ps {
+        list.List::Empty => {
+            return (args, query, opts, count);
+        }
+        list.List::Cons(one, rest) => {
+            let tail = unbox(heap, rest);
+            let model.Parameter { name, place, required, schema } = one;
+            var in_path = false;
+            var in_query = false;
+            match place {
+                model.Where::InPath => {
+                    in_path = true;
+                }
+                model.Where::InQuery => {
+                    in_query = true;
+                }
+                model.Where::InHeader => {
+                }
+            }
+            var args2 = args;
+            var query2 = query;
+            var n = count;
+            if required && in_path {
+                args2 = buffer.append(heap, args2, ", ");
+                borrow name as &nb in {
+                    args2 = buffer.append(heap, args2, buffer.bytes(nb));
+                }
+                args2 = buffer.append(heap, args2, ": ");
+                // The path parameter's type, from its schema.
+                match schema {
+                    model.Schema::Integer => {
+                        args2 = buffer.append(heap, args2, "int");
+                    }
+                    model.Schema::Boolean => {
+                        args2 = buffer.append(heap, args2, "bool");
+                    }
+                    model.Schema::Number => {
+                        args2 = buffer.append(heap, args2, "float");
+                    }
+                    model.Schema::String => {
+                        args2 = buffer.append(heap, args2, "buffer.Buffer");
+                    }
+                    model.Schema::Object(held) => {
+                        let inner = unbox(heap, held);
+                        model.drop_fields(heap, inner);
+                        args2 = buffer.append(heap, args2, "buffer.Buffer");
+                    }
+                    model.Schema::Array(inner) => {
+                        let items = unbox(heap, inner);
+                        model.drop_schema(heap, items);
+                        args2 = buffer.append(heap, args2, "buffer.Buffer");
+                    }
+                    model.Schema::Ref(rname) => {
+                        borrow rname as &rn in {
+                            args2 = buffer.append(heap, args2, buffer.bytes(rn));
+                        }
+                        buffer.drop(heap, rname);
+                    }
+                }
+                n = n + 1;
+            } else if in_query && !required {
+                borrow name as &nb in {
+                    query2 = buffer.append(heap, query2, buffer.bytes(nb));
+                    query2 = buffer.append(heap, query2, ", ");
+                }
+                model.drop_schema(heap, schema);
+            } else {
+                model.drop_schema(heap, schema);
+            }
+            buffer.drop(heap, name);
+            return args_and_query(heap, tail, args2, query2, opts, n);
+        }
+    }
+}
+
+// `GET`, `POST`, ... -- as the request line wants it.
+fn method_upper(m: model.Method) -> [] &static [byte] {
+    match m {
+        model.Method::Get => {
+            return "GET";
+        }
+        model.Method::Put => {
+            return "PUT";
+        }
+        model.Method::Post => {
+            return "POST";
+        }
+        model.Method::Delete => {
+            return "DELETE";
+        }
+        model.Method::Options => {
+            return "OPTIONS";
+        }
+        model.Method::Head => {
+            return "HEAD";
+        }
+        model.Method::Patch => {
+            return "PATCH";
+        }
+        model.Method::Trace => {
+            return "TRACE";
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
+// The file
+// ---------------------------------------------------------------------
+
+pub fn write[&h](heap: &!h Heap, doc: model.Doc) -> [heap] buffer.Buffer {
+    let model.Doc { operations, components } = doc;
+    var out = buffer.empty(heap, 8192);
+    let (components, has_problem) = has_problem_component(heap, components);
+
+    out = buffer.append(heap, out, "// Generated by clientgen from the byte-verified OpenAPI 3.1 document. DO NOT EDIT.\n");
+    out = buffer.append(heap, out, "// The gate (issue #6) diffs this file in CI. Strict: a field of the wrong kind\n");
+    out = buffer.append(heap, out, "// is left at its default, never guessed. The poller loop is the caller's (as\n");
+    out = buffer.append(heap, out, "// `web`'s is): cancho has no hidden loop, and `cancho authority` on the program\n");
+    out = buffer.append(heap, out, "// using this module says exactly what it can touch.\n\n");
+    out = buffer.append(heap, out, "edition 5;\nmodule users_client;\n\n");
+    out = buffer.append(heap, out, "import std.buffer;\nimport std.json;\nimport std.list;\n\n");
+    if !has_problem {
+        out = buffer.append(heap, out, "// No `Problem` component in this document: the tool's own is below.\n\n");
+    } else {
+        out = buffer.append(heap, out, "// The typed problem: the document's own `Problem` component, matched on.\n\n");
+    }
+    // The one helper the generated drops need: ending a list of owned buffers.
+    // Recursive, as `std.list`'s own `drop` is -- a loop's residual is a whole
+    // list the checker cannot see is empty.
+    out = buffer.append(heap, out, "fn drop_buffer_list[&h](heap: &!h Heap, items: list.List[buffer.Buffer]) -> [heap] int {\n");
+    out = buffer.append(heap, out, "    match items {\n        list.List::Empty => { return 0; }\n        list.List::Cons(one, rest) => {\n            let tail = unbox(heap, rest);\n            buffer.drop(heap, one);\n            return 1 + drop_buffer_list(heap, tail);\n        }\n    }\n}\n\n");
+    out = components_block(heap, out, components);
+    out = operations_block(heap, out, operations);
+    return out;
+}

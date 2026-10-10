@@ -22,7 +22,7 @@ client is written from the document by this tool, and neither side hand-writes t
 
 ## Status
 
-**Slices 1 to 6 built: the reader, the model, three targets, the gate.** [`src/clientgen.cho`](src/clientgen.cho) reads the document
+**All seven slices built: the reader, the model, three targets, the gate, the cancho client.** [`src/clientgen.cho`](src/clientgen.cho) reads the document
 with `std.json`'s tape -- no copy, no foreign code -- and refuses what is not an OpenAPI 3.1 document (nine
 shape refusals, nothing written for an invalid one, pgen's discipline). [`src/model.cho`](src/model.cho)
 models what it reads, in the enum-and-struct discipline of [cancho-web#27](https://github.com/alpibrusl/cancho-web/issues/27):
@@ -54,9 +54,15 @@ implementing `error` -- compiles under `go build` and `go vet`, held by the same
 [`examples/users/py/client.py`](examples/users/py/client.py) -- a frozen `@dataclass` per component, a
 typed method per operation over `urllib.request` (no third-party package), `problem+json` as
 `ProblemError` -- passes `mypy --strict` and runs against the live service in
-[`tests/client_e2e.py`](tests/client_e2e.py). The design is [`docs/design.md`](docs/design.md). The work
-is sequenced in [the epic (#2)](https://github.com/alpibrusl/cancho-client-gen/issues/2); the cancho
-client (#9) is not started. Sequenced after
+[`tests/client_e2e.py`](tests/client_e2e.py). The design is [`docs/design.md`](docs/design.md). The cancho client
+([#9](https://github.com/alpibrusl/cancho-client-gen/issues/9)) is built:
+[`examples/users/cho/client.cho`](examples/users/cho/client.cho) -- a `res struct` per component with a
+strict `decode_*` (a field of the wrong kind is left at its default, never guessed), a `build_*` fn per
+operation (method, interpolated target, query), `problem+json` the document's own `Problem` matched on --
+type-checks under `cancho check`, is `cancho fmt`-canonical, and is held by the same gate. The poller
+loop is the caller's (as `web`'s is): the generated module is the typed contract, and the program that
+uses it owns its loop and its authority row. The work is sequenced in
+[the epic (#2)](https://github.com/alpibrusl/cancho-client-gen/issues/2); the epic is complete. Sequenced after
 [cancho-web#16](https://github.com/alpibrusl/cancho-web/issues/16): components used below the schema root must
 be written as `$ref`, not inline -- named shapes mean a class per component instead of an anonymous one, and
 a client generator is the consumer that wants them.
@@ -87,8 +93,7 @@ a client generator is the consumer that wants them.
 
 ## Quick start
 
-The reader, the model, the TypeScript, Go and Python targets and the gate are built; the cancho
-client is [#9](https://github.com/alpibrusl/cancho-client-gen/issues/9). What runs today:
+All seven slices are built. What runs today:
 
 ```
 scripts/build.sh build/clientgen
@@ -137,11 +142,13 @@ src/model.cho             the model: Method, Where, Schema (with $ref resolved t
 src/ts.cho                the TypeScript writer: an interface per component, a function per operation, ProblemError
 src/gow.cho               the Go writer: a type per component, a function per operation, ProblemError implementing error
 src/py.cho                the Python writer: a frozen dataclass per component, a typed method per operation, ProblemError
+src/cancho.cho            the cancho writer: a res struct per component, a build fn per operation, the caller owns the loop
 examples/users/openapi.json  cancho-web's byte-verified document, the first test input
 examples/users/ts/client.ts  the generated TypeScript client, committed; the gate holds it against the document
 examples/users/go/client.go  the generated Go client, committed; go build and go vet in CI
 examples/users/py/client.py  the generated Python client, committed; mypy --strict and a live run in CI
 docs/design.md           the design the slices were built against
+examples/users/cho/client.cho  the generated cancho client, committed; cancho check and fmt in CI
 tests/e2e.py              the end-to-end tests: the document read and modelled, every refusal, tsc --strict
 tests/client_e2e.mjs      the committed TypeScript client against the running users service
 tests/client_e2e.py       the committed Python client against the running users service
