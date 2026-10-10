@@ -18,7 +18,6 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 CANCHO=${CANCHO:-cancho}
 BIN=${BIN:-$here/build/clientgen}
 DOC=${DOC:-$here/examples/users/openapi.json}
-OUT=${OUT:-$here/examples/users/ts/client.ts}
 
 if [ ! -x "$BIN" ]; then
   echo "check-client: building clientgen first" >&2
@@ -37,10 +36,18 @@ fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 "$BIN" "$DOC" --typescript -o "$tmp/client.ts"
+"$BIN" "$DOC" --go -o "$tmp/client.go"
 
-if ! diff -u "$OUT" "$tmp/client.ts"; then
-  echo "check-client: $OUT is stale: regenerate it with" >&2
-  echo "  $BIN $DOC --typescript -o $OUT" >&2
-  exit 1
+fail=0
+if ! diff -u "$here/examples/users/ts/client.ts" "$tmp/client.ts"; then
+  echo "check-client: examples/users/ts/client.ts is stale: regenerate it with" >&2
+  echo "  $BIN $DOC --typescript -o examples/users/ts/client.ts" >&2
+  fail=1
 fi
-echo "check-client: $OUT matches the document"
+if ! diff -u "$here/examples/users/go/client.go" "$tmp/client.go"; then
+  echo "check-client: examples/users/go/client.go is stale: regenerate it with" >&2
+  echo "  $BIN $DOC --go -o examples/users/go/client.go" >&2
+  fail=1
+fi
+if [ "$fail" != 0 ]; then exit 1; fi
+echo "check-client: both clients match the document"

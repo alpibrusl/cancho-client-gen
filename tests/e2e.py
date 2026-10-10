@@ -175,8 +175,8 @@ class Reader(unittest.TestCase):
         """Without a target, plain mode refuses rather than pretending to generate."""
         out, err, st = run(USERS)
         self.assertEqual(st, 1)
-        self.assertIn("the TypeScript writer is built", err)
-        self.assertIn("the Go and Python writers are not", err)
+        self.assertIn("the TypeScript and Go writers are built", err)
+        self.assertIn("the Python writer is not", err)
         self.assertEqual(out, "")
 
     def test_missing_file(self):
@@ -193,7 +193,7 @@ class Reader(unittest.TestCase):
     def test_usage(self):
         out, err, st = run()
         self.assertEqual(st, 2)
-        self.assertEqual(err, "usage: clientgen <openapi.json> [--check | --model | --typescript -o <file>]\n")
+        self.assertEqual(err, "usage: clientgen <openapi.json> [--check | --model | --typescript -o <file> | --go -o <file>]\n")
 
     def test_typescript_client(self):
         """The generated client is the committed one, byte for byte (the gate's shape)."""
@@ -205,6 +205,26 @@ class Reader(unittest.TestCase):
         with open(out_path, "rb") as f:
             with open(os.path.join(ROOT, "examples", "users", "ts", "client.ts"), "rb") as g:
                 self.assertEqual(f.read(), g.read(), "examples/users/ts/client.ts is stale: regenerate it")
+
+    def test_go_client(self):
+        """The generated Go client is the committed one, byte for byte."""
+        out_path = os.path.join(ROOT, "build", "client.go")
+        out, err, st = run(USERS, "--go", "-o", out_path)
+        self.assertEqual(st, 0)
+        self.assertEqual(err, "")
+        with open(out_path, "rb") as f:
+            with open(os.path.join(ROOT, "examples", "users", "go", "client.go"), "rb") as g:
+                self.assertEqual(f.read(), g.read(), "examples/users/go/client.go is stale: regenerate it")
+
+    def test_go_build(self):
+        """The committed Go client builds and vets (the issue's bar)."""
+        godir = os.path.join(ROOT, "examples", "users", "go")
+        if not os.path.exists(os.path.join(godir, "client.go")):
+            self.skipTest("committed Go client not present")
+        go = os.environ.get("GO", "go")
+        for check in ([go, "build", "./..."], [go, "vet", "./..."]):
+            p = subprocess.run(check, cwd=godir, capture_output=True, text=True, timeout=300)
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
     def test_typescript_deterministic(self):
         """Same document, same bytes: two runs agree."""

@@ -22,7 +22,7 @@ client is written from the document by this tool, and neither side hand-writes t
 
 ## Status
 
-**Slices 1 to 4 built: the reader, the model, the TypeScript target, the gate.** [`src/clientgen.cho`](src/clientgen.cho) reads the document
+**Slices 1 to 5 built: the reader, the model, the TypeScript target, the gate, the Go target.** [`src/clientgen.cho`](src/clientgen.cho) reads the document
 with `std.json`'s tape -- no copy, no foreign code -- and refuses what is not an OpenAPI 3.1 document (nine
 shape refusals, nothing written for an invalid one, pgen's discipline). [`src/model.cho`](src/model.cho)
 models what it reads, in the enum-and-struct discipline of [cancho-web#27](https://github.com/alpibrusl/cancho-web/issues/27):
@@ -46,9 +46,12 @@ component, a typed function per operation (`getUser(id: number): Promise<User>`)
 is built: [`scripts/check-client.sh`](scripts/check-client.sh) regenerates the client from the document and diffs
 (`git diff --exit-code` -- a contract change without a regenerated client is a red build, not an integration
 break), and [`tests/client_e2e.mjs`](tests/client_e2e.mjs) runs the committed client against the running
-cancho-web users service -- one happy path and one `problem+json` refusal, typed both ways. The work is sequenced
-in [the epic (#2)](https://github.com/alpibrusl/cancho-client-gen/issues/2); the Go and Python targets (#7, #8)
-and the cancho client (#9) are not started. Sequenced after
+cancho-web users service -- one happy path and one `problem+json` refusal, typed both ways. The Go target ([#7](https://github.com/alpibrusl/cancho-client-gen/issues/7)) is built:
+[`examples/users/go/client.go`](examples/users/go/client.go) -- a `type` per component, a function per
+operation over `net/http` (`getUser(c *Client, id int) (User, error)`), `problem+json` as `*ProblemError`
+implementing `error` -- compiles under `go build` and `go vet`, held by the same gate. The work is sequenced
+in [the epic (#2)](https://github.com/alpibrusl/cancho-client-gen/issues/2); the Python target (#8) and
+the cancho client (#9) are not started. Sequenced after
 [cancho-web#16](https://github.com/alpibrusl/cancho-web/issues/16): components used below the schema root must
 be written as `$ref`, not inline -- named shapes mean a class per component instead of an anonymous one, and
 a client generator is the consumer that wants them.
@@ -79,8 +82,7 @@ a client generator is the consumer that wants them.
 
 ## Quick start
 
-The reader, the model, the TypeScript target and the gate are built; the Go and Python targets are
-[#7](https://github.com/alpibrusl/cancho-client-gen/issues/7) and
+The reader, the model, the TypeScript and Go targets and the gate are built; the Python target is
 [#8](https://github.com/alpibrusl/cancho-client-gen/issues/8). What runs today:
 
 ```
@@ -128,8 +130,10 @@ byte for byte), the same document pins the client (the gate), and the live check
 src/clientgen.cho         the reader and the tool: `std.json`'s tape, the shape checks; --check, --model, --typescript
 src/model.cho             the model: Method, Where, Schema (with $ref resolved to a name), Operation, ...; res all the way down
 src/ts.cho                the TypeScript writer: an interface per component, a function per operation, ProblemError
+src/gow.cho               the Go writer: a type per component, a function per operation, ProblemError implementing error
 examples/users/openapi.json  cancho-web's byte-verified document, the first test input
-examples/users/ts/client.ts  the generated client, committed; the gate holds it against the document
+examples/users/ts/client.ts  the generated TypeScript client, committed; the gate holds it against the document
+examples/users/go/client.go  the generated Go client, committed; go build and go vet in CI
 tests/e2e.py              the end-to-end tests: the document read and modelled, every refusal, tsc --strict
 tests/client_e2e.mjs      the committed client against the running users service (happy path, problem+json)
 scripts/check-client.sh   the gate: regenerate, git diff --exit-code
