@@ -4,8 +4,8 @@ on:
   pull_request:
 
 env:
-  CANCHO_REV: 93e49cd
-  WEB_REV: e4dccd7
+  CANCHO_REV: a4572ea3b506e4bcec1c4be43deda1043c11ba9f
+  WEB_REV: e4dccd754c53468b2e8fd25dd7608a734e294d02
 
 jobs:
   build-and-test:
@@ -30,7 +30,10 @@ jobs:
           export CANCHO=$GITHUB_WORKSPACE/cancho/target/release/cancho
           $CANCHO check cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho cancho-client-gen/src/cancho.cho --std --backend cranelift
           $CANCHO fmt --check cancho-client-gen/src/
+          mkdir -p cancho-client-gen/build
           $CANCHO build --std --backend cranelift cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho cancho-client-gen/src/cancho.cho -o cancho-client-gen/build/clientgen
+      - name: mypy, for the test that holds the committed Python client to --strict
+        run: pip install mypy
       - name: The reader and the model, over the byte-verified document
         run: python3 tests/e2e.py
         working-directory: cancho-client-gen
@@ -39,8 +42,9 @@ jobs:
           BIN: ${{ github.workspace }}/cancho-client-gen/build/clientgen
       - name: The authority report
         run: |
-          $CANCHO authority cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho --std > docs/authority.json
+          $CANCHO authority src/clientgen.cho src/model.cho src/ts.cho src/gow.cho src/py.cho src/cancho.cho --std --output json > docs/authority.json
           git diff --exit-code -- docs/authority.json
+        working-directory: cancho-client-gen
         env:
           CANCHO: ${{ github.workspace }}/cancho/target/release/cancho
 
@@ -77,6 +81,7 @@ jobs:
       - name: Build clientgen
         run: |
           export CANCHO=$GITHUB_WORKSPACE/cancho/target/release/cancho
+          mkdir -p cancho-client-gen/build
           $CANCHO build --std --backend cranelift cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho cancho-client-gen/src/cancho.cho -o cancho-client-gen/build/clientgen
       - uses: actions/setup-go@v5
         with:
@@ -95,7 +100,12 @@ jobs:
         working-directory: cancho-client-gen
       - name: The committed cancho client checks and is fmt-canonical
         run: |
-          $CANCHO check examples/users/cho/client.cho --std --backend cranelift || [ "$?" = "100" ]
+          # A library module has no `main`, so for a clean module the compiler's whole answer is the one
+          # program-shape refusal; a type error in it is reported instead (checked: a deliberate error in a copy
+          # prints its position and no such line). The pinned compiler exits 1 for it, not 100.
+          out=$($CANCHO check examples/users/cho/client.cho --std --backend cranelift 2>&1 || true)
+          echo "$out"
+          [ "$out" = 'examples/users/cho/client.cho: error: no `main` function' ]
           $CANCHO fmt --check examples/users/cho/client.cho
         working-directory: cancho-client-gen
         env:
