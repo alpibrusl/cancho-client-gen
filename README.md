@@ -53,7 +53,7 @@ implementing `error` -- compiles under `go build` and `go vet`, held by the same
 ([#8](https://github.com/alpibrusl/cancho-client-gen/issues/8)) is built:
 [`examples/users/py/client.py`](examples/users/py/client.py) -- a frozen `@dataclass` per component, a
 typed method per operation over `urllib.request` (no third-party package), `problem+json` as
-`ProblemError` -- passes `mypy --strict` and runs against the live service in
+`ProblemError`, and a 2xx body decoded strictly into the dataclass the method declares (a `ResponseError` that names the path otherwise) -- passes `mypy --strict` and runs against the live service in
 [`tests/client_e2e.py`](tests/client_e2e.py). The design is [`docs/design.md`](docs/design.md). The cancho client
 ([#9](https://github.com/alpibrusl/cancho-client-gen/issues/9)) is built:
 [`examples/users/cho/client.cho`](examples/users/cho/client.cho) -- a `res struct` per component with a
@@ -141,7 +141,7 @@ src/clientgen.cho         the reader and the tool: `std.json`'s tape, the shape 
 src/model.cho             the model: Method, Where, Schema (with $ref resolved to a name), Operation, ...; res all the way down
 src/ts.cho                the TypeScript writer: an interface per component, a function per operation, ProblemError
 src/gow.cho               the Go writer: a type per component, a function per operation, ProblemError implementing error
-src/py.cho                the Python writer: a frozen dataclass per component, a typed method per operation, ProblemError
+src/py.cho                the Python writer: a frozen dataclass per component, a typed method per operation that returns that dataclass (strictly decoded; ResponseError otherwise), ProblemError
 src/cancho.cho            the cancho writer: a res struct per component, a build fn per operation, the caller owns the loop
 examples/users/openapi.json  cancho-web's byte-verified document, the first test input
 examples/users/ts/client.ts  the generated TypeScript client, committed; the gate holds it against the document
