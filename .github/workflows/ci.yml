@@ -32,6 +32,8 @@ jobs:
           $CANCHO fmt --check cancho-client-gen/src/
           mkdir -p cancho-client-gen/build
           $CANCHO build --std --backend cranelift cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho cancho-client-gen/src/cancho.cho -o cancho-client-gen/build/clientgen
+      - name: mypy, for the test that holds the committed Python client to --strict
+        run: pip install mypy
       - name: The reader and the model, over the byte-verified document
         run: python3 tests/e2e.py
         working-directory: cancho-client-gen
