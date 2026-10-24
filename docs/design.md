@@ -141,7 +141,8 @@ Same model, same gate, third writer (`src/py.cho`, `clientgen <doc> --python -o 
   with the optionality in the signature — decided: keyword arguments, because Python has no struct
   literal to pass and the function *is* the interface);
 * `ProblemError(Exception)` carrying the problem as a dataclass, `problem+json` raised, the 2xx
-  body returned (a `204` is `None`);
+  body decoded into the dataclass the method declares (a `204` is `None`), or a `ResponseError`
+  (see "Corrected" below);
 * the runtime over `urllib.request` only: no `pip install`, no third-party dependency, typed with
   `from __future__ import annotations` so the file is its own contract;
 * the gate: the committed `examples/users/py/client.py` byte for byte, `mypy --strict` over it,
@@ -154,6 +155,30 @@ into its fields and drops the `None` ones — the `omitempty` strictness the Go 
 and mypy needs the query dict's pairs annotated (`cast('list[tuple[str, Any]]', ...)`), because the
 optional values are `T | None` and inference alone cannot name the tuple. The document's own `Problem`
 wins here too: when it names one, the generated file uses it and only `ProblemError` is the tool's.
+
+**Corrected: the Python client returned dicts under dataclass annotations.** The first build of this
+section said "the 2xx body returned" and returned `json.loads` output under a `cast`, so
+`createUser(...)` was annotated `-> User` and was a `dict` at runtime (`type(u).__name__ == 'dict'`),
+and `mypy --strict` passed because `cast` says nothing about what is there. That contradicted the
+file's own header ("a response is the dataclass it declares, or a ProblemError") and the other
+targets: Go decodes into the struct and the cancho client has a strict `decode_*`. The test that
+should have caught it asserted `isinstance(created, dict)` under the name "returns the typed User".
+Now every 2xx body goes through a small generated `_decode` before it is returned. **Decided:**
+* strict, no coercion: an `int` field takes a JSON integer and not a boolean, a `str` takes a string,
+  a `float` takes a number, a list takes an array, an inline object is a `dict`; anything else is a
+  `ResponseError(where, expected, got)` carrying the path (`$.items[0]`), what the document said and
+  the kind of what arrived;
+* a required field that is missing is a `ResponseError`; an optional one (`T | None`) may be absent or
+  `null`; a member the document does not name is **ignored**, not refused (a server may add fields
+  without breaking its clients; the contract is what the document names);
+* no reflection and no dependency: the runtime reads the annotation strings the generated dataclasses
+  already carry (`from __future__ import annotations` keeps them strings), so it works on any Python
+  that has dataclasses, not only on those that can evaluate `int | None`;
+* `ProblemError` is unchanged; `problem+json` is still raised before any decoding.
+**Not done:** the response *headers* are not decoded; a `oneOf` response is refused by the reader before
+it gets here (section 10.1), so the decoder has no union to guess at; a component that is not an
+object (a bare `list` or scalar, written as a dataclass with one field `value`) decodes from the bare
+JSON value, and this path is exercised by no committed document.
 
 ## 9. The cancho client (#9), built as decided
 
