@@ -42,8 +42,9 @@ jobs:
           BIN: ${{ github.workspace }}/cancho-client-gen/build/clientgen
       - name: The authority report
         run: |
-          $CANCHO authority cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho --std > docs/authority.json
+          $CANCHO authority src/clientgen.cho src/model.cho src/ts.cho src/gow.cho src/py.cho src/cancho.cho --std --output json > docs/authority.json
           git diff --exit-code -- docs/authority.json
+        working-directory: cancho-client-gen
         env:
           CANCHO: ${{ github.workspace }}/cancho/target/release/cancho
 
