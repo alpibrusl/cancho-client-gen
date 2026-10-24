@@ -97,7 +97,12 @@ jobs:
         working-directory: cancho-client-gen
       - name: The committed cancho client checks and is fmt-canonical
         run: |
-          $CANCHO check examples/users/cho/client.cho --std --backend cranelift || [ "$?" = "100" ]
+          # A library module has no `main`, so for a clean module the compiler's whole answer is the one
+          # program-shape refusal; a type error in it is reported instead (checked: a deliberate error in a copy
+          # prints its position and no such line). The pinned compiler exits 1 for it, not 100.
+          out=$($CANCHO check examples/users/cho/client.cho --std --backend cranelift 2>&1 || true)
+          echo "$out"
+          [ "$out" = 'examples/users/cho/client.cho: error: no `main` function' ]
           $CANCHO fmt --check examples/users/cho/client.cho
         working-directory: cancho-client-gen
         env:
