@@ -22,4 +22,11 @@ if [ "$CANCHO" = "cancho" ] && [ ! -x "$CANCHO" ]; then
   (cd "$CANCHO_DIR" && git checkout "$REV" && cargo build --release -p cancho)
   CANCHO="$CANCHO_DIR/target/release/cancho"
 fi
-"$CANCHO" build --std --backend cranelift "$here/src/clientgen.cho" -o "$out"
+# clientgen.cho imports the other modules of src/ (model, ts, gow, py, cancho), and `cancho build` takes every
+# file of the program: the first is the entry point, the rest are listed beside it, as CI lists them. Building
+# clientgen.cho alone fails with "no module `model`".
+others=()
+for f in "$here"/src/*.cho; do
+  [ "$f" = "$here/src/clientgen.cho" ] || others+=("$f")
+done
+"$CANCHO" build --std --backend cranelift "$here/src/clientgen.cho" "${others[@]}" -o "$out"
