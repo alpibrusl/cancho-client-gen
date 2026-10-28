@@ -5,7 +5,7 @@ on:
 
 env:
   CANCHO_REV: f4ead824f33b291a0ad7620a34a0c1346a7abe4f
-  WEB_REV: e4dccd754c53468b2e8fd25dd7608a734e294d02
+  WEB_REV: c45a1a95638d0c58838f819428c6e8f5388ca5e6
 
 jobs:
   build-and-test:
@@ -70,7 +70,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: alpibrusl/cancho-schema
-          ref: 59a70285ff23af63a226bc56ff978feccb4cf8ca
+          ref: ab15474b0974f96fc71595520774bd2f17a7e3b9
           path: cancho-schema
       - uses: dtolnay/rust-toolchain@stable
         with:
