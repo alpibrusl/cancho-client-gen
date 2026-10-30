@@ -22,4 +22,4 @@ if [ "$CANCHO" = "cancho" ] && [ ! -x "$CANCHO" ]; then
   (cd "$CANCHO_DIR" && git checkout "$REV" && cargo build --release -p cancho)
   CANCHO="$CANCHO_DIR/target/release/cancho"
 fi
-"$CANCHO" build --std --backend cranelift "$here/src/clientgen.cho" -o "$out"
+"$CANCHO" build --std "$here/src/clientgen.cho" -o "$out"

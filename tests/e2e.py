@@ -37,7 +37,7 @@ component Problem: object
 
 
 def build():
-    subprocess.run([CANCHO, "build", "--std", "--backend", "cranelift",
+    subprocess.run([CANCHO, "build", "--std",
                     os.path.join(ROOT, "src", "clientgen.cho"),
                     os.path.join(ROOT, "src", "model.cho"),
                     "-o", os.path.join(ROOT, "build", "clientgen")], check=True)
@@ -264,7 +264,7 @@ class Reader(unittest.TestCase):
         if not os.path.exists(path):
             self.skipTest("committed cancho client not present")
         cancho = os.environ.get("CANCHO", "cancho")
-        p = subprocess.run([cancho, "check", path, "--std", "--backend", "cranelift"],
+        p = subprocess.run([cancho, "check", path, "--std"],
                            capture_output=True, text=True, timeout=300)
         # A module (no `main`) type-checks: the one notice is "no `main`
         # function" and nothing else (any other `error:` is a refusal).

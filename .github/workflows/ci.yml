@@ -4,8 +4,8 @@ on:
   pull_request:
 
 env:
-  CANCHO_REV: a4572ea3b506e4bcec1c4be43deda1043c11ba9f
-  WEB_REV: e4dccd754c53468b2e8fd25dd7608a734e294d02
+  CANCHO_REV: 2bd251f7f9354fe43d48055b3d9fe4d4af007a5c
+  WEB_REV: c45a1a95638d0c58838f819428c6e8f5388ca5e6
 
 jobs:
   build-and-test:
@@ -23,15 +23,15 @@ jobs:
         with:
           toolchain: 1.98.1
       - name: Build the pinned compiler
-        run: cargo build --release -p cancho
+        run: scripts/install.sh "$(git rev-parse HEAD)" "$RUNNER_TEMP/cancho-release" && mkdir -p target/release && cp "$RUNNER_TEMP/cancho-release/bin/cancho" target/release/cancho
         working-directory: cancho
       - name: Build clientgen
         run: |
           export CANCHO=$GITHUB_WORKSPACE/cancho/target/release/cancho
-          $CANCHO check cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho cancho-client-gen/src/cancho.cho --std --backend cranelift
+          $CANCHO check cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho cancho-client-gen/src/cancho.cho --std
           $CANCHO fmt --check cancho-client-gen/src/
           mkdir -p cancho-client-gen/build
-          $CANCHO build --std --backend cranelift cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho cancho-client-gen/src/cancho.cho -o cancho-client-gen/build/clientgen
+          $CANCHO build --std cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho cancho-client-gen/src/cancho.cho -o cancho-client-gen/build/clientgen
       - name: mypy, for the test that holds the committed Python client to --strict
         run: pip install mypy
       - name: The reader and the model, over the byte-verified document
@@ -70,19 +70,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: alpibrusl/cancho-schema
-          ref: 59a70285ff23af63a226bc56ff978feccb4cf8ca
+          ref: ab15474b0974f96fc71595520774bd2f17a7e3b9
           path: cancho-schema
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.1
       - name: Build the pinned compiler
-        run: cargo build --release -p cancho
+        run: scripts/install.sh "$(git rev-parse HEAD)" "$RUNNER_TEMP/cancho-release" && mkdir -p target/release && cp "$RUNNER_TEMP/cancho-release/bin/cancho" target/release/cancho
         working-directory: cancho
       - name: Build clientgen
         run: |
           export CANCHO=$GITHUB_WORKSPACE/cancho/target/release/cancho
           mkdir -p cancho-client-gen/build
-          $CANCHO build --std --backend cranelift cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho cancho-client-gen/src/cancho.cho -o cancho-client-gen/build/clientgen
+          $CANCHO build --std cancho-client-gen/src/clientgen.cho cancho-client-gen/src/model.cho cancho-client-gen/src/ts.cho cancho-client-gen/src/gow.cho cancho-client-gen/src/py.cho cancho-client-gen/src/cancho.cho -o cancho-client-gen/build/clientgen
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27"
@@ -103,7 +103,7 @@ jobs:
           # A library module has no `main`, so for a clean module the compiler's whole answer is the one
           # program-shape refusal; a type error in it is reported instead (checked: a deliberate error in a copy
           # prints its position and no such line). The pinned compiler exits 1 for it, not 100.
-          out=$($CANCHO check examples/users/cho/client.cho --std --backend cranelift 2>&1 || true)
+          out=$($CANCHO check examples/users/cho/client.cho --std 2>&1 || true)
           echo "$out"
           [ "$out" = 'examples/users/cho/client.cho: error: no `main` function' ]
           $CANCHO fmt --check examples/users/cho/client.cho
