@@ -525,7 +525,7 @@ fn reverse_fields_into[&h](heap: &!h Heap, left: list.List[Field], acc: list.Lis
 // An object schema: `properties` walked in document order, each field
 // marked by whether `required` names it.
 fn read_object[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte], i: int) -> [heap] (Schema, int) {
-    var fields = list.List::Empty;
+    var fields: list.List[Field] = list.List::Empty;
     let props = json.get(src, tape, i, "properties");
     if props >= 0 && json.is_object(tape, props) {
         // The required names, newline-separated: a field checks itself
@@ -672,7 +672,7 @@ fn read_parameter[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int]
 }
 
 fn read_parameters[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte], arr: int) -> [heap] (list.List[Parameter], int) {
-    var out = list.List::Empty;
+    var out: list.List[Parameter] = list.List::Empty;
     var j = arr + 1;
     var left = json.count(tape, arr);
     while left > 0 {
@@ -877,7 +877,7 @@ fn read_operation[&h, &s, &t, &p, &n](heap: &!h Heap, src: &s [byte], tape: &t [
         return (Operation { id: buffer.empty(heap, 1), method: method, path: buffer.empty(heap, 1), parameters: parameters, body: body, body_optional: body_optional, responses: list.List::Empty }, bad_body);
     }
     // The responses.
-    var responses = list.List::Empty;
+    var responses: list.List[Response] = list.List::Empty;
     var bad_responses = 0;
     var j = responses_at + 1;
     var left = json.count(tape, responses_at);
@@ -986,7 +986,7 @@ fn reverse_components_into[&h](heap: &!h Heap, left: list.List[Component], acc: 
 // order too.
 // The operations of `paths`, in document order.
 fn build_operations[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte]) -> [heap] (list.List[Operation], int) {
-    var operations = list.List::Empty;
+    var operations: list.List[Operation] = list.List::Empty;
     let paths = json.get(src, tape, 0, "paths");
     var j = paths + 1;
     var left = json.count(tape, paths);
@@ -1022,7 +1022,7 @@ fn build_operations[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [in
 
 // The components of `components.schemas`, in document order.
 fn build_components[&h, &s, &t, &n](heap: &!h Heap, src: &s [byte], tape: &t [int], names: &n [byte]) -> [heap] (list.List[Component], int) {
-    var components = list.List::Empty;
+    var components: list.List[Component] = list.List::Empty;
     let comps = json.get(src, tape, 0, "components");
     if comps >= 0 && json.is_object(tape, comps) {
         let schemas = json.get(src, tape, comps, "schemas");
@@ -1060,8 +1060,8 @@ fn swap_components[&h](heap: &!h Heap, old: list.List[Component], new: list.List
 // the borrow ends before the branches and `names` is dropped on one path.
 fn build_with[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], names: buffer.Buffer) -> [heap] (Doc, int) {
     var bad = 0;
-    var ops_ok = list.List::Empty;
-    var comps_ok = list.List::Empty;
+    var ops_ok: list.List[Operation] = list.List::Empty;
+    var comps_ok: list.List[Component] = list.List::Empty;
     borrow names as &nm in {
         let nm_bytes = buffer.bytes(nm);
         let (operations, bad_ops) = build_operations(heap, src, tape, nm_bytes);
