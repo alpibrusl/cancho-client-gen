@@ -4,7 +4,7 @@ on:
   pull_request:
 
 env:
-  CANCHO_REV: dcf6751951590aa7f3427001eca3bef0d6677f3b
+  CANCHO_REV: 2bd251f7f9354fe43d48055b3d9fe4d4af007a5c
   WEB_REV: c45a1a95638d0c58838f819428c6e8f5388ca5e6
 
 jobs:
